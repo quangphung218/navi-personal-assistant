@@ -173,3 +173,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Quyết định: `apply job` là một ví dụ của tiến độ cam kết, không phải domain riêng của Navi. Pipeline, mã `J...` và follow-up tuyển dụng làm sản phẩm bị thu hẹp và tạo thêm thao tác không cần thiết.
 - Đã dọn: gỡ `/jobs` khỏi menu, trợ giúp, parser, Worker và Cron. Migration mới xoá bảng thử nghiệm; giữ migration tạo bảng trong lịch sử để môi trường D1 đã deploy không bị lệch.
 - Hướng tiếp: xây check-in tiến độ theo mục tiêu/cam kết/thói quen đang hoạt động, để cùng một luồng nhận được apply job, phần đã xong của side project hoặc bất kỳ kết quả đo được nào.
+
+## 2026-09-09 18:30 — Check-in theo mục kế hoạch
+
+- Đã làm: kế hoạch tuần tạo bốn mục có cấu trúc: mục tiêu, cam kết và hai thói quen. Mỗi mục có metric `count` khi câu chứa một chỉ tiêu số, hoặc `completion` cho kết quả hoàn thành một lần.
+- Chat: các câu kết quả như “Anh đã public Navi lên GitHub” hoặc “Anh đã đọc sách” được đối chiếu với mục kế hoạch hiện hành. Navi chỉ ghi khi có đúng một mục khớp; không khớp hoặc nhiều khả năng thì yêu cầu nói rõ hơn.
+- Dữ liệu: `weekly_checkins` giữ occurrence gắn với `weekly_plan_items`; `/progress` hiển thị trạng thái của các mục hoàn thành hoặc đã có check-in. Luồng apply/chạy bộ cũ vẫn giữ nguyên để bảo toàn lịch sử pilot.
+- Đã kiểm chứng: test bao phủ metric lúc lập tuần, check-in generic, hoàn thành mục tiêu, và không ghi dữ liệu khi câu “việc đó” thiếu ngữ cảnh.

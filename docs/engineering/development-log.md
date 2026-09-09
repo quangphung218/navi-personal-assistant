@@ -60,6 +60,13 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Chưa làm / giới hạn: chưa tạo PNG/ICO và chưa kiểm tra trực tiếp ở kích thước Telegram avatar.
 - Bước tiếp theo: chọn kích thước xuất và dùng mark trong các bề mặt UI của Navi.
 
+## 2026-09-09 11:35 — Đối chiếu lại concept 01
+
+- Bối cảnh: bản hiệu chỉnh trước vẫn khác reference vì có hai màu trên ribbon và hình học quá giống chữ N dựng thẳng.
+- Đã làm: dùng một nét ivory liên tục, cong mềm hơn, waypoint coral lớn hơn và bỏ mảng xanh.
+- Quyết định: reference concept 01 là nguồn thị giác ưu tiên; không thêm chi tiết chỉ để làm rõ chữ N.
+- Chưa làm / giới hạn: cần render cạnh reference ở kích thước avatar trước khi chốt cuối.
+
 ## 2026-09-09 10:45 — Guided weekly plan
 
 - Bối cảnh: cần biến mục tiêu, cam kết và thói quen của tuần mẫu thành dữ liệu có xác nhận.

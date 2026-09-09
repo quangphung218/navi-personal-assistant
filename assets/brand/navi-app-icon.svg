@@ -2,7 +2,6 @@
   <title id="title">Navi app icon</title>
   <desc id="desc">Navi continuous hidden path mark on a dark rounded square.</desc>
   <rect width="256" height="256" rx="56" fill="#132A35"/>
-  <path d="M58 178V86c0-12 16-17 23-7l78 98c9 12 29 6 29-9V78" fill="none" stroke="#F3EFE5" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M58 178V86c0-12 16-17 23-7l18 23" fill="none" stroke="#8FA89A" stroke-width="34" stroke-linecap="round" stroke-linejoin="round"/>
-  <circle cx="188" cy="55" r="13" fill="#E47E68"/>
+  <path d="M63 180V88c0-17 22-24 33-10l75 97c11 14 34 7 34-11V77" fill="none" stroke="#F3EFE5" stroke-width="42" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="205" cy="51" r="17" fill="#E47E68"/>
 </svg>

@@ -19,6 +19,20 @@ function weekStart(now: number): string {
   return local.toISOString().slice(0, 10);
 }
 
+function datedRunLabel(date: { day: number; month: number; year?: number }, now: number): string | undefined {
+  const localNow = new Date(now + 7 * 60 * 60 * 1000);
+  const year = date.year ?? localNow.getUTCFullYear();
+  const value = new Date(Date.UTC(year, date.month - 1, date.day));
+  if (value.getUTCFullYear() !== year || value.getUTCMonth() !== date.month - 1 || value.getUTCDate() !== date.day) return undefined;
+  return value.toISOString().slice(0, 10);
+}
+
+function weekEnd(start: string): string {
+  const value = new Date(`${start}T00:00:00Z`);
+  value.setUTCDate(value.getUTCDate() + 6);
+  return value.toISOString().slice(0, 10);
+}
+
 function targetFrom(text: string): number | undefined {
   const value = Number(text.match(/\b(\d{1,3})\b/u)?.[1]);
   return Number.isInteger(value) && value > 0 ? value : undefined;
@@ -125,18 +139,24 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           FROM weekly_progress_events WHERE week_start=?`).bind(currentWeek).first<{applications:number|null;runs:number|null}>();
         let applications = counts?.applications ?? 0, runs = counts?.runs ?? 0;
         if (command.kind === 'progress') {
-          const label = command.activity === 'job_application' ? command.detail : localDate(now);
-          const normalized = normalize(label);
-          const existing = await db.prepare('SELECT id FROM weekly_progress_events WHERE week_start=? AND kind=? AND normalized_label=?')
-            .bind(currentWeek, command.activity, normalized).first<{id:number}>();
-          if (existing) result = command.activity === 'job_application'
-            ? `Vị trí “${label}” đã được ghi trong tuần này nên em không cộng lại.\n\n${formatProgress(plan, applications, runs)}`
-            : `Buổi chạy ngày ${label} đã được ghi rồi nên em không cộng lại.\n\n${formatProgress(plan, applications, runs)}`;
-          else {
-            statements.push(db.prepare(`INSERT INTO weekly_progress_events(week_start,kind,label,normalized_label,source_update,occurred_at)
-              SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek, command.activity, label, normalized, job.update_id, now, ...args()));
-            if (command.activity === 'job_application') applications += 1; else runs += 1;
-            result = `${command.activity === 'job_application' ? `Đã ghi nhận anh apply: ${label}.` : `Đã ghi nhận buổi chạy ngày ${label}.`}\n\n${formatProgress(plan, applications, runs)}`;
+          const label = command.activity === 'job_application' ? command.detail
+            : command.date ? datedRunLabel(command.date, now) : localDate(now);
+          if (!label) result = 'Ngày chạy bộ không hợp lệ. Anh ghi theo dạng: “Ngày 7/9 anh đã chạy bộ”.';
+          else if (command.activity === 'run' && (label < currentWeek || label > weekEnd(currentWeek))) {
+            result = `Ngày ${label} không nằm trong tuần đang theo dõi (${currentWeek} đến ${weekEnd(currentWeek)}).`;
+          } else {
+            const normalized = normalize(label);
+            const existing = await db.prepare('SELECT id FROM weekly_progress_events WHERE week_start=? AND kind=? AND normalized_label=?')
+              .bind(currentWeek, command.activity, normalized).first<{id:number}>();
+            if (existing) result = command.activity === 'job_application'
+              ? `Vị trí “${label}” đã được ghi trong tuần này nên em không cộng lại.\n\n${formatProgress(plan, applications, runs)}`
+              : `Buổi chạy ngày ${label} đã được ghi rồi nên em không cộng lại.\n\n${formatProgress(plan, applications, runs)}`;
+            else {
+              statements.push(db.prepare(`INSERT INTO weekly_progress_events(week_start,kind,label,normalized_label,source_update,occurred_at)
+                SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek, command.activity, label, normalized, job.update_id, now, ...args()));
+              if (command.activity === 'job_application') applications += 1; else runs += 1;
+              result = `${command.activity === 'job_application' ? `Đã ghi nhận anh apply: ${label}.` : `Đã ghi nhận buổi chạy ngày ${label}.`}\n\n${formatProgress(plan, applications, runs)}`;
+            }
           }
         } else result = formatProgress(plan, applications, runs);
       }

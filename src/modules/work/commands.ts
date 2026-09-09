@@ -2,7 +2,7 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
   | { kind: 'list'; includeDone: boolean } | { kind: 'confirm' } | { kind: 'reject' }
   | { kind: 'week' } | { kind: 'weekStatus' }
   | { kind: 'progress'; activity: 'job_application'; detail: string }
-  | { kind: 'progress'; activity: 'run' }
+  | { kind: 'progress'; activity: 'run'; date?: { day: number; month: number; year?: number } }
   | { kind: 'status' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
@@ -26,6 +26,12 @@ export function parseCommand(text: string): Command {
   if (application) {
     const detail = application[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
     if (detail.length > 1 && detail.length <= 180) return { kind: 'progress', activity: 'job_application', detail };
+  }
+  const datedRun = value.match(/^ngày\s+(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?\s+(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?[.!]?$/iu);
+  if (datedRun) {
+    const day = Number(datedRun[1]), month = Number(datedRun[2]);
+    const year = datedRun[3] ? Number(datedRun[3]) : undefined;
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { kind: 'progress', activity: 'run', date: { day, month, year } };
   }
   if (/^(?:\/log\s+run|(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?)[.!]?$/iu.test(value)) return { kind: 'progress', activity: 'run' };
   if (/^(?:đúng|đúng rồi|ok|okay|đồng ý|xác nhận|yes)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'confirm' };

@@ -116,3 +116,12 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: 22 test workerd/D1 và TypeScript qua; test bao phủ hai kiểu trùng và báo `1/5`, `1/3`.
 - Chưa làm / giới hạn: chưa có URL/công ty riêng cho hồ sơ ứng tuyển, chưa sửa/xóa occurrence và chưa nhắc chủ động.
 - Bước tiếp theo: chạy pilot với dữ liệu thật, sau đó thêm lệnh sửa occurrence trước khi bật nhắc lịch.
+
+## 2026-09-09 15:50 — Sửa cập nhật chạy bộ có ngày
+
+- Bối cảnh: câu “Ngày 7/9 anh đã chạy bộ” nhận được phản hồi chậm nhưng không tạo occurrence; D1 production chỉ có occurrence apply và chưa có occurrence chạy.
+- Nguyên nhân: parser chỉ nhận “Hôm nay anh đã chạy bộ”, nên câu có ngày bị chuyển sang OpenRouter. Model có thể trò chuyện về kết quả nhưng không có quyền ghi tiến độ.
+- Đã làm: nhận ngày `d/m` hoặc `d/m/yyyy`, kiểm tra ngày lịch hợp lệ và giới hạn trong tuần đang theo dõi; lưu ngày chuẩn `yyyy-mm-dd` trực tiếp vào `weekly_progress_events`.
+- Đã kiểm chứng: thêm regression test từ nguyên văn tin nhắn thực tế, xác nhận không gọi AI và ghi ngày `2026-09-07`.
+- Vận hành: sáu delivery gần nhất mất khoảng 2,5–8 giây, ngoại lệ cao nhất gần 58 giây. Nhánh deterministic mới loại bỏ thời gian OpenRouter khỏi cập nhật chạy bộ có ngày.
+- Bước tiếp theo: theo dõi độ trễ sau deploy; sau đó thêm telemetry theo từng giai đoạn ingress, xử lý và gửi Telegram nếu vẫn vượt mục tiêu.

@@ -66,6 +66,19 @@ describe('task conversation on real D1 bindings',()=>{
     expect(status).toContain('Apply: 1/5');
     expect(status).toContain('Chạy bộ: 1/3');
   });
+  it('records an explicitly dated run without calling AI',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now);await processNext(db,now);
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const){
+      await receive(update(id,text));await processNext(db,now);
+    }
+    let aiCalls=0;
+    await receive(update(8,'Ngày 7/9 anh đã chạy bộ'));
+    await processNext(db,now,async()=>{aiCalls++;return 'AI fallback';});
+    const events=await db.prepare("SELECT kind,label FROM weekly_progress_events WHERE kind='run'").all<{kind:string;label:string}>();
+    expect(aiCalls).toBe(0);
+    expect(events.results).toEqual([{kind:'run',label:'2026-09-07'}]);
+  });
   it('proposes a natural task and only creates it after confirmation',async()=>{
     await link(); await receive(update(2,'À chắc anh phải thêm task apply 5 job trong tuần này')); await processNext(db);
     expect(await tasks(db)).toEqual([]);

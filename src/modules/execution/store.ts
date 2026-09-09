@@ -103,7 +103,13 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       result = list.length ? list.slice(0, 20).map(t => `${t.status === 'done' ? '✓' : '○'} ${t.id}: ${t.title.slice(0, 140)}`).join('\n')
         + (list.length > 20 ? '\nĐang hiển thị 20 việc đầu; hoàn thành bớt để xem các việc tiếp theo.' : '') : 'Chưa có công việc nào được ghi nhận trong danh sách này.';
     } else if (command.kind === 'done') {
-      const key = command.reference.replace(/^#/, '').toUpperCase();
+      let reference = command.reference;
+      if (normalize(reference) === 'đó') {
+        const recentTask = await db.prepare("SELECT id FROM tasks WHERE status='open' ORDER BY created_at DESC,id DESC LIMIT 2").all<{id:string}>();
+        if (recentTask.results.length !== 1) { result = recentTask.results.length > 1 ? 'Có nhiều việc có thể là “việc đó”. Anh dùng mã T... để em chọn đúng nhé.' : 'Em chưa thấy task gần đây để đánh dấu hoàn thành.'; reference = ''; }
+        else reference = recentTask.results[0]!.id;
+      }
+      const key = reference.replace(/^#/, '').toUpperCase();
       const matches = /^T\d+$/.test(key)
         ? (await db.prepare('SELECT id,title,status,revision FROM tasks WHERE id=?').bind(key).all<Task>()).results
         : (await db.prepare('SELECT id,title,status,revision FROM tasks WHERE normalized_title=? LIMIT 2').bind(normalize(command.reference)).all<Task>()).results;

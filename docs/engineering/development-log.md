@@ -69,3 +69,11 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: 20 test runtime D1/Workers, typecheck qua; kiểm tra được trạng thái pending approval và saved task.
 - Chưa làm / giới hạn: chưa có tham chiếu “việc đó” theo reply/thread, chưa có memory claims hoặc tóm tắt hội thoại dài.
 - Bước tiếp theo: thêm resolver cho task/approval đang được nhắc đến và bộ test từ các câu hội thoại thực tế.
+
+## 2026-09-09 11:05 — Context resolver v1
+
+- Bối cảnh: câu tham chiếu như “việc đó” cần nối với đối tượng gần nhất mà không đoán khi mơ hồ.
+- Đã làm: nhận “đánh dấu việc đó xong”, chọn duy nhất task đang mở gần nhất; nhiều ứng viên hoặc không có ứng viên thì yêu cầu mã task.
+- Đã kiểm chứng: 21 test runtime D1/Workers và typecheck qua.
+- Chưa làm / giới hạn: chưa xử lý reply/thread Telegram hoặc tham chiếu kế hoạch/approval bằng đại từ.
+- Bước tiếp theo: thêm bộ câu hội thoại thực tế và resolver cho task trong kế hoạch tuần.

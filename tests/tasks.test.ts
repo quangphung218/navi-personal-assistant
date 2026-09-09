@@ -38,6 +38,11 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await replies()).at(-1)).toContain('Task gần nhất đã được lưu');
     expect((await db.prepare('SELECT COUNT(*) AS count FROM conversation_messages').first<{count:number}>())?.count).toBeGreaterThan(4);
   });
+  it('resolves “việc đó” only when one recent open task exists',async()=>{
+    await link(); await receive(update(2,'/add Viết proposal')); await processNext(db); await replies();
+    await receive(update(3,'đánh dấu việc đó xong')); await processNext(db);
+    expect(await tasks(db,true)).toMatchObject([{status:'done',title:'Viết proposal'}]);
+  });
   it('guides a weekly plan and saves only after confirmation',async()=>{
     await link();
     for(const [id,text] of [[2,'/week'],[3,'Ship Navi MVP'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách 2 buổi']] as const){await receive(update(id,text));await processNext(db);}

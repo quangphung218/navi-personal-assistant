@@ -10,6 +10,7 @@ export function parseCommand(text: string): Command {
     const title = add[1]!.trim().replace(/\s+/g, ' ');
     return title.length > 0 && title.length <= 180 ? { kind: 'add', title } : { kind: 'unknown' };
   }
+  if (/^(?:đánh dấu|đánh dấu là)\s+(?:việc đó|task đó|cái đó)\s+(?:xong|hoàn thành)$/iu.test(value)) return { kind: 'done', reference: 'đó' };
   const done = value.match(/^(?:\/done(?:@\w+)?\s+|(?:xong|hoàn thành)\s+)(.+)$/iu);
   if (done) return { kind: 'done', reference: done[1]!.trim() };
   if (/^\/list(?:@\w+)?\s+all$/iu.test(value)) return { kind: 'list', includeDone: true };

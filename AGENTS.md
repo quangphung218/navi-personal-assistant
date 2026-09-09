@@ -1,4 +1,4 @@
-# Working on Personal Assistant
+# Working on Navi
 
 ## Product and scope
 

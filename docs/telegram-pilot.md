@@ -8,7 +8,7 @@ Ngày: 08/09/2026. Trạng thái: đầu vào sản phẩm đã ghi nhận; chư
 |---|---|---|
 | Kênh | Telegram, hội thoại riêng cho bản đầu | Bot và liên kết tài khoản |
 | Vận hành | Hoạt động 24/7 trong giai đoạn thử; anh chưa có VPS/server | Host, chi phí và tài khoản triển khai |
-| Mục tiêu công việc | Xây chính chatbot Personal Assistant trong repo này và public lên GitHub | Phạm vi bản công bố, deadline và tiêu chí bản dùng được |
+| Mục tiêu công việc | Xây chính chatbot Navi trong repo này và public lên GitHub | Phạm vi bản công bố, deadline và tiêu chí bản dùng được |
 | Cam kết định kỳ | Tìm và apply ít nhất 5 job/tuần | Vai trò, địa điểm/remote, tiêu chí phù hợp, hồ sơ và lịch rảnh |
 | Thói quen | Chạy bộ 3 buổi/tuần | Ngày/giờ, thời lượng và cách ghi nhận |
 

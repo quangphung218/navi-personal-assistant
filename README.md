@@ -1,4 +1,4 @@
-# Personal Assistant
+# Navi
 
 Ban trợ lý cá nhân theo module cho công việc, đời sống, thói quen và mục tiêu. Chat là nơi tương tác hằng ngày; web phục vụ xem tổng thể, chi tiết và quản trị.
 
@@ -6,7 +6,7 @@ Ban trợ lý cá nhân theo module cho công việc, đời sống, thói quen 
 
 Bắt đầu: [hướng dẫn local và kết nối tài khoản](docs/engineering/local-setup.md). Chạy `npm run doctor`, `npm run check`, rồi `npm run dev`.
 
-- [Bản thiết kế hiện hành — 08/09/2026](docs/personal-assistant-product.md): mục tiêu sản phẩm, hành trình sử dụng, module, skill, điều phối, dữ liệu, thực thi và lộ trình.
+- [Bản thiết kế hiện hành — 08/09/2026](docs/personal-assistant-product.md): mục tiêu sản phẩm Navi, hành trình sử dụng, module, skill, điều phối, dữ liệu, thực thi và lộ trình.
 - [Review hướng chat — 08/09/2026](docs/reviews/chat-first-review.md): các khoảng thiếu đã bổ sung, quyết định còn mở và tình huống nghiệm thu.
 - [Nghiên cứu nền](docs/research/personal-operating-assistant.md): các hướng công nghệ đã khảo sát tháng 8; kiểm tra lại trước khi chọn phiên bản triển khai.
 - [Các review trước](docs/reviews/council-synthesis.md): tài liệu tham khảo lịch sử. Hướng Founder SaaS và yêu cầu paid beta trong các review không áp dụng cho mục tiêu cá nhân hiện hành.

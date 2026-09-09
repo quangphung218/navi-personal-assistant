@@ -1,6 +1,6 @@
 # Development log
 
-Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Personal Assistant. Mỗi mục ghi một lát cắt có ý nghĩa, không ghi từng lệnh terminal hay tin nhắn xã giao.
+Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi. Mỗi mục ghi một lát cắt có ý nghĩa, không ghi từng lệnh terminal hay tin nhắn xã giao.
 
 ## Quy tắc ghi vết
 

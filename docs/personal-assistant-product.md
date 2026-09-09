@@ -1,4 +1,4 @@
-# Personal Assistant — Ban trợ lý cá nhân theo module
+# Navi — Ban trợ lý cá nhân theo module
 
 Ngày: 08/09/2026. Trạng thái: bản thiết kế sản phẩm để triển khai; chưa phải phần mềm đã chạy.
 

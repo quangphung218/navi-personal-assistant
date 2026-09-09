@@ -52,6 +52,14 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Chưa làm / giới hạn: chưa có wordmark hoàn chỉnh, favicon PNG/ICO hoặc kiểm tra hiển thị Telegram thực tế.
 - Bước tiếp theo: dùng mark này trong web/admin surface khi bắt đầu xây giao diện; tiếp tục flow kế hoạch tuần.
 
+## 2026-09-09 11:20 — Hiệu chỉnh Hidden Path mark
+
+- Bối cảnh: bản SVG đầu tiên lệch concept 01 vì dùng nhiều mảng ghép thành chữ N.
+- Đã làm: thay bằng một nét ribbon liên tục; khoảng âm tạo nhịp chữ N, waypoint coral đứng tách ở phía trước; đồng bộ mark trong suốt và app icon.
+- Đã kiểm chứng: cả hai SVG dùng viewBox vuông, không phụ thuộc font hoặc runtime.
+- Chưa làm / giới hạn: chưa tạo PNG/ICO và chưa kiểm tra trực tiếp ở kích thước Telegram avatar.
+- Bước tiếp theo: chọn kích thước xuất và dùng mark trong các bề mặt UI của Navi.
+
 ## 2026-09-09 10:45 — Guided weekly plan
 
 - Bối cảnh: cần biến mục tiêu, cam kết và thói quen của tuần mẫu thành dữ liệu có xác nhận.

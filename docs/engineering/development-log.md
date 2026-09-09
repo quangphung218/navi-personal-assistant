@@ -211,3 +211,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Review: kiểm tra thay đổi từ khi thêm check-in chung theo yêu cầu sản phẩm và quy tắc repo. Đã sửa matcher bỏ qua từ “làm”, khôi phục thời điểm thực cho check-in chạy bộ có ngày, giữ giới hạn tuần, và thêm hạn 24 giờ cho nút chọn mục mơ hồ. Nút sau hạn hoặc sau khi plan bị archive tự bị từ chối.
 - Giới hạn còn theo dõi: các bảng progress cũ vẫn tồn tại để nối dữ liệu pilot lịch sử vào check-in mới; chưa xoá khi chưa có migration/export thay thế. Corpus hiện khóa phân loại 20 câu và một số hành vi trọng yếu; sẽ mở rộng thành test end-to-end theo dữ liệu pilot thật.
 - Đã kiểm chứng: test review → carry → tuần mới → dashboard, check-in ngày cụ thể, 34 tests D1/Worker, typecheck và build.
+
+## 2026-09-09 21:20 — Kế hoạch tuần với một thói quen
+
+- Đã làm: sau thói quen đầu tiên, Navi cho phép anh nhắn “bỏ qua” để không tạo thói quen thứ hai. Bản tóm tắt trước khi xác nhận cũng chỉ hiện các mục thực sự đã chọn.
+- Dữ liệu: mục thói quen trống không còn được tạo trong `weekly_plan_items`, vì vậy `/today`, nhắc tiến độ và review tự động chỉ đọc ba mục còn lại.
+- Đã kiểm chứng: regression test lập kế hoạch một thói quen, kiểm tra bản tóm tắt, dữ liệu D1 và dashboard.

@@ -78,6 +78,20 @@ describe('task conversation on real D1 bindings',()=>{
       {kind:'habit',title:'Đọc sách 2 buổi',metric:'count',target_count:2},
     ]);
   });
+  it('allows a weekly plan with one habit',async()=>{
+    await link();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi MVP'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'bỏ qua']] as const){await receive(update(id,text));await processNext(db);}
+    const summary=(await replies()).at(-1);
+    expect(summary).toContain('Thói quen 1: Chạy bộ 3 buổi');
+    expect(summary).not.toContain('Thói quen 2');
+    await receive(update(7,'đúng')); await processNext(db);
+    expect(await db.prepare('SELECT goal,commitment,habit1,habit2 FROM weekly_plans').first()).toMatchObject({goal:'Ship Navi MVP',commitment:'Apply 5 jobs',habit1:'Chạy bộ 3 buổi',habit2:''});
+    expect((await db.prepare('SELECT title FROM weekly_plan_items ORDER BY id').all<{title:string}>()).results).toEqual([
+      {title:'Ship Navi MVP'}, {title:'Apply 5 jobs'}, {title:'Chạy bộ 3 buổi'},
+    ]);
+    await receive(update(8,'/today')); await processNext(db);
+    expect((await replies()).at(-1)).not.toContain('Thói quen 2');
+  });
   it('carries selected tasks into a new week and archives the prior plan',async()=>{
     const now=Date.now(), local=new Date(now+7*60*60*1000), day=local.getUTCDay();
     local.setUTCDate(local.getUTCDate()-(day===0?6:day-1)+7);

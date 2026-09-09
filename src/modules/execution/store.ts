@@ -76,7 +76,7 @@ function planItemValues(plan: Pick<WeeklyPlan,'goal'|'commitment'|'habit1'|'habi
     { kind:'commitment' as const, position:0, title:plan.commitment },
     { kind:'habit' as const, position:1, title:plan.habit1 },
     { kind:'habit' as const, position:2, title:plan.habit2 },
-  ].map(item => ({ ...item, ...metricFor(item.title) }));
+  ].filter(item => item.title.trim().length > 0).map(item => ({ ...item, ...metricFor(item.title) }));
 }
 
 async function planItems(db: D1Database, week: string): Promise<PlanItem[]> {
@@ -289,10 +289,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         result = 'Đã ghi cam kết. Thói quen thứ nhất anh muốn theo dõi là gì?';
       } else if (draft.step === 'habit1') {
         statements.push(db.prepare(`UPDATE weekly_drafts SET habit1=?,step='habit2' WHERE id=1 AND ${guard}`).bind(value, ...args()));
-        result = 'Đã ghi thói quen thứ nhất. Thói quen thứ hai là gì?';
+        result = 'Đã ghi thói quen thứ nhất. Thói quen thứ hai là gì? Nếu chỉ theo dõi một thói quen, anh nhắn “bỏ qua”.';
       } else {
-        statements.push(db.prepare(`UPDATE weekly_drafts SET habit2=?,step='confirm' WHERE id=1 AND ${guard}`).bind(value, ...args()));
-        result = `Em tóm tắt kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${value}\n\nAnh bấm nút để lưu hoặc bỏ.`;
+        const habit2 = /^(?:bỏ qua|bo qua|skip|không có)$/iu.test(value) ? '' : value;
+        statements.push(db.prepare(`UPDATE weekly_drafts SET habit2=?,step='confirm' WHERE id=1 AND ${guard}`).bind(habit2, ...args()));
+        result = `Em tóm tắt kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}${habit2 ? `\n• Thói quen 2: ${habit2}` : ''}\n\nAnh bấm nút để lưu hoặc bỏ.`;
         replyMarkup = confirmationButtons(`weekly:${draft.week_start}`);
       }
     } else if (command.kind === 'week') {

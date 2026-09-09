@@ -9,6 +9,7 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
   | { kind: 'progressChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkInChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkIn'; text: string }
+  | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
   | { kind: 'reminders'; enabled?: boolean }
   | { kind: 'status' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
@@ -18,6 +19,8 @@ export function parseCommand(text: string): Command {
   const callback = value.match(/^_navi:(confirm|reject):([a-z]+:[a-z0-9-]+)$/iu);
   if (callback) return { kind: callback[1] === 'confirm' ? 'confirm' : 'reject', target: callback[2]!.toLowerCase() };
   if (/^_navi:show:progress$/iu.test(value)) return { kind: 'progressList' };
+  const checkInSelect = value.match(/^_navi:checkin:select:(\d+):(\d+)$/iu);
+  if (checkInSelect) return { kind: 'checkInSelect', sourceUpdate: Number(checkInSelect[1]), itemId: Number(checkInSelect[2]) };
   const taskAction = value.match(/^_navi:task:(done|defer|clear):(T\d+)$/iu);
   if (taskAction) return taskAction[1] === 'done' ? { kind: 'done', reference: taskAction[2]!.toUpperCase() }
     : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };

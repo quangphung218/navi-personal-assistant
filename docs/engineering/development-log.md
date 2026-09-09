@@ -186,3 +186,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: câu apply và chạy bộ giờ cũng đi vào `weekly_checkins`, cùng đường với mục tiêu và thói quen khác. Khi đọc một kế hoạch cũ, Navi tự nối các occurrence apply/chạy bộ lịch sử vào đúng cam kết hoặc thói quen để không mất tiến độ đã ghi.
 - Hiển thị và nhắc: `/progress`, dashboard, nhắc tối và review đọc số liệu từ mục kế hoạch/check-in thay vì duy trì hai bộ đếm active.
 - Chỉnh sửa: `/progress` hiển thị mã `C...`; hỗ trợ `/progress edit C... Nội dung mới` và `/progress delete C...`, chỉ áp dụng sau khi anh xác nhận. Audit request giữ lại khi một check-in bị xoá.
+
+## 2026-09-09 20:20 — Chọn mục check-in khi ngữ cảnh mơ hồ
+
+- Đã làm: khi một câu báo kết quả khớp nhiều mục kế hoạch, Navi hiện tối đa ba nút chọn thay vì yêu cầu anh gõ lại.
+- An toàn: selection request giữ chat, tuần, update gốc và danh sách item hợp lệ; callback chỉ ghi khi request còn pending và item nằm trong danh sách đó. Nút cũ hoặc callback sửa tay chỉ nhận phản hồi hết hiệu lực.
+- Đã kiểm chứng: regression test bao phủ câu “Anh đã hoàn thành Navi” khớp hai mục, markup Telegram scoped và việc chỉ item được chọn nhận check-in.

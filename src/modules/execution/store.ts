@@ -11,6 +11,7 @@ type ReminderPreference = { weekly_progress_enabled: number; delivery_hour: numb
 type ProgressEvent = { id: number; kind: 'job_application'|'run'; label: string; normalized_label: string };
 type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename'; new_label: string|null };
 type CheckInChange = { id: number; checkin_id: number; action: 'delete'|'rename'; new_note: string|null };
+type CheckInSelection = { id: number; week_start: string; source_update: number; text: string; candidate_item_ids: string; status: 'pending'|'selected'|'rejected' };
 type PlanItem = { id: number; kind: 'goal'|'commitment'|'habit'; position: number; title: string; normalized_title: string; metric: 'count'|'completion'; target_count: number|null; status: 'active'|'completed'; completed: number };
 
 function localDate(now: number): string {
@@ -164,6 +165,10 @@ function taskReminderButtons(taskId: string): ReplyMarkup {
   ], [{ text: 'Bỏ nhắc', callback_data: `_navi:task:clear:${taskId}` }]] };
 }
 
+function checkInSelectionButtons(sourceUpdate: number, items: PlanItem[]): ReplyMarkup {
+  return { inline_keyboard: items.slice(0,3).map(item => [{ text: item.title.slice(0,60), callback_data: `_navi:checkin:select:${sourceUpdate}:${item.id}` }]) };
+}
+
 function readReplyMarkup(value: string|null): ReplyMarkup | undefined {
   if (!value) return undefined;
   try {
@@ -241,7 +246,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'checkInChange' && command.kind !== 'checkInSelect' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
@@ -336,7 +341,13 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         const items = await ensurePlanItems(db, plan, now);
         const candidates = checkInCandidates(items, command.text);
         if (!candidates.length) result = `Em chưa nối được cập nhật này với một mục trong kế hoạch tuần. Anh nói rõ tên mục tiêu hoặc task giúp em nhé.\n\n${formatPlanItems(items)}`;
-        else if (candidates.length > 1) result = `Em thấy cập nhật này có thể thuộc nhiều mục:\n${candidates.map(item=>`• ${item.title}`).join('\n')}\n\nAnh nhắc lại tên mục anh đã hoàn thành để em ghi đúng nhé.`;
+        else if (candidates.length > 1) {
+          const choices = candidates.slice(0,3);
+          statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_selection_requests(chat_id,week_start,source_update,text,candidate_item_ids,created_at)
+            SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(job.chat_id,currentWeek,job.update_id,command.text,JSON.stringify(choices.map(item=>item.id)),now,...args()));
+          result = `Em thấy cập nhật này có thể thuộc vài mục. Anh chọn đúng mục để em ghi nhé:\n${choices.map(item=>`• ${item.title}`).join('\n')}`;
+          replyMarkup = checkInSelectionButtons(job.update_id,choices);
+        }
         else {
           const item = candidates[0]!;
           const quantity = item.metric === 'count' ? Math.max(1, Number(command.text.match(/\b(\d{1,3})\b/u)?.[1] ?? 1)) : 1;
@@ -351,6 +362,30 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
             result = `Đã ghi nhận cho “${item.title}”: ${progress}.`;
             replyMarkup = progressButton;
           }
+        }
+      }
+    } else if (command.kind === 'checkInSelect') {
+      const selection = await db.prepare(`SELECT id,week_start,source_update,text,candidate_item_ids,status FROM checkin_selection_requests
+        WHERE chat_id=? AND source_update=? AND status='pending'`).bind(job.chat_id,command.sourceUpdate).first<CheckInSelection>();
+      let candidateIds: number[] = [];
+      try { const value: unknown = selection ? JSON.parse(selection.candidate_item_ids) : []; candidateIds = Array.isArray(value) && value.every(Number.isInteger) ? value : []; } catch { candidateIds = []; }
+      const item = selection && candidateIds.includes(command.itemId) ? await db.prepare(`SELECT i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,
+        COALESCE(SUM(c.quantity),0) AS completed FROM weekly_plan_items i LEFT JOIN weekly_checkins c ON c.plan_item_id=i.id
+        WHERE i.id=? AND i.week_start=? GROUP BY i.id`).bind(command.itemId,selection.week_start).first<PlanItem>() : undefined;
+      if (!selection || !item) result = 'Lựa chọn này không còn hiệu lực. Anh gửi lại cập nhật để Navi hỏi lại nhé.';
+      else {
+        const quantity = item.metric === 'count' ? Math.max(1, Number(selection.text.match(/\b(\d{1,3})\b/u)?.[1] ?? 1)) : 1;
+        const existing = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=?').bind(selection.source_update).first<{id:number}>();
+        if (existing) result = `Cập nhật này đã được ghi cho “${item.title}”.`;
+        else {
+          statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
+            SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(selection.week_start,item.id,quantity,selection.text,normalize(selection.text),selection.source_update,now,...args()));
+          statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='selected',selected_item_id=?,decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
+            .bind(item.id,now,selection.id,...args()));
+          const completed = item.completed + quantity;
+          if (item.metric === 'completion' || (item.target_count !== null && completed >= item.target_count)) statements.push(db.prepare(`UPDATE weekly_plan_items SET status='completed' WHERE id=? AND ${guard}`).bind(item.id,...args()));
+          result = `Đã ghi nhận cho “${item.title}”: ${item.metric === 'count' ? `${completed}/${item.target_count}` : 'đã hoàn thành'}.`;
+          replyMarkup = progressButton;
         }
       }
     } else if (command.kind === 'checkInChange') {

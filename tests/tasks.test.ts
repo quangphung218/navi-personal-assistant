@@ -12,6 +12,7 @@ import inlineActionsMigration from '../migrations/0009_inline_actions.sql?raw';
 import dailyLoopMigration from '../migrations/0010_daily_execution_loop.sql?raw';
 import genericCheckinsMigration from '../migrations/0013_generic_plan_checkins.sql?raw';
 import checkinCorrectionsMigration from '../migrations/0014_checkin_corrections.sql?raw';
+import checkinSelectionMigration from '../migrations/0015_checkin_selection.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -33,8 +34,8 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['checkin_change_requests','weekly_checkins','weekly_plan_items','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -81,6 +82,17 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(9,'Anh đã hoàn thành việc đó')); await processNext(db);
     expect(await db.prepare('SELECT COUNT(*) AS count FROM weekly_checkins').first()).toMatchObject({count:1});
     expect((await replies()).at(-1)).toContain('chưa nối được');
+  });
+  it('offers scoped inline choices when a check-in matches multiple planned items',async()=>{
+    await link();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi MVP'],[4,'Public Navi lên GitHub'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db);}
+    await replies(); await receive(update(8,'Anh đã hoàn thành Navi')); await processNext(db);
+    let markup: unknown;
+    await deliverNext(db,async (_chat,_text,buttons)=>{markup=buttons;return {kind:'sent',messageId:1};});
+    expect(markup).toEqual({inline_keyboard:[[{text:'Ship Navi MVP',callback_data:'_navi:checkin:select:8:1'}],[{text:'Public Navi lên GitHub',callback_data:'_navi:checkin:select:8:2'}]]});
+    await receive(update(9,'_navi:checkin:select:8:2')); await processNext(db);
+    expect(await db.prepare('SELECT plan_item_id,note FROM weekly_checkins').first()).toMatchObject({plan_item_id:2,note:'Anh đã hoàn thành Navi'});
+    expect(await db.prepare('SELECT status,selected_item_id FROM checkin_selection_requests WHERE source_update=8').first()).toMatchObject({status:'selected',selected_item_id:2});
   });
   it('records weekly applications and one run per local day without duplicates',async()=>{
     await link();

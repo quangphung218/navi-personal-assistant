@@ -234,3 +234,8 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: thêm `/status` để đọc dữ liệu vận hành vừa quan sát được: kế hoạch tuần hiện hành, task mở, trạng thái nhắc và check-in gần nhất. Không suy đoán uptime ngoài việc Worker vừa xử lý lệnh.
 - Telemetry: `/insights` tổng hợp check-in ghi thẳng, ghi sau khi chọn, chưa nối được mục và lựa chọn còn chờ trong tuần hiện tại. Lệnh không hiển thị nội dung hội thoại mới.
 - Telegram: hai lệnh mới được thêm vào Menu và `/help`.
+
+## 2026-09-10 — Xuất dữ liệu pilot
+
+- Đã làm: `/export` tạo bản Markdown của kế hoạch tuần, tối đa 6 task gần nhất và 6 check-in tuần hiện tại; `/export json` trả cùng snapshot ở dạng máy đọc được.
+- Giới hạn: Telegram có giới hạn độ dài tin nhắn nên export chủ động giới hạn danh sách. Đây là snapshot gửi riêng cho chat đã pairing, không phải backup lịch sử đầy đủ hay file đính kèm.

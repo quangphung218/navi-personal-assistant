@@ -287,6 +287,33 @@ async function insightsSummary(db: D1Database, chatId: string, now: number): Pro
   return `Tín hiệu check-in tuần này\n• Ghi thẳng: ${counts.get('recorded') ?? 0}\n• Ghi sau khi anh chọn: ${counts.get('selected') ?? 0}\n• Chưa nối được mục: ${counts.get('unmatched') ?? 0}\n• Đang chờ chọn: ${pending?.count ?? 0}\n\nEm dùng các số này để biết câu nào cần bổ sung vào corpus, không lưu thêm nội dung tin nhắn.`;
 }
 
+async function exportSummary(db: D1Database, chatId: string, now: number, format: 'markdown'|'json'): Promise<string> {
+  const currentWeek = weekStart(now);
+  const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+    .bind(currentWeek,chatId).first<WeeklyPlan>();
+  const [items, taskRows, checkins] = await Promise.all([
+    plan ? ensurePlanItems(db,plan,now) : Promise.resolve([] as PlanItem[]),
+    db.prepare('SELECT id,title,status,due_at,completed_at FROM tasks ORDER BY created_at DESC,id DESC LIMIT 6').all<{id:string;title:string;status:string;due_at:number|null;completed_at:number|null}>(),
+    db.prepare(`SELECT c.id,c.note,c.quantity,c.occurred_at,i.title AS item_title FROM weekly_checkins c
+      JOIN weekly_plan_items i ON i.id=c.plan_item_id JOIN weekly_plans p ON p.week_start=c.week_start
+      WHERE p.chat_id=? AND c.week_start=? ORDER BY c.occurred_at DESC,c.id DESC LIMIT 6`).bind(chatId,currentWeek).all<{id:number;note:string;quantity:number;occurred_at:number;item_title:string}>(),
+  ]);
+  if (format === 'json') {
+    const payload = {
+      exportedAt: new Date(now).toISOString(), weekStart: currentWeek,
+      plan: plan && { goal:plan.goal, commitment:plan.commitment, habits:[plan.habit1,plan.habit2].filter(Boolean), items:items.map(item=>({title:item.title,metric:item.metric,target:item.target_count,completed:item.completed,status:item.status})) },
+      tasks: taskRows.results.map(task=>({id:task.id,title:task.title.slice(0,120),status:task.status,dueAt:task.due_at,completedAt:task.completed_at})),
+      checkins: checkins.results.map(checkin=>({id:checkin.id,item:checkin.item_title.slice(0,120),quantity:checkin.quantity,note:checkin.note.slice(0,120),occurredAt:checkin.occurred_at})),
+      limits: { tasks:6, checkins:6 },
+    };
+    return `Navi export (JSON, tối đa 6 task và 6 check-in)\n\`\`\`json\n${JSON.stringify(payload)}\n\`\`\``;
+  }
+  const taskLines = taskRows.results.length ? taskRows.results.map(task=>`• ${task.status === 'done' ? '✓' : '○'} ${task.id}: ${task.title}${task.due_at ? ` — nhắc ${formatLocalTime(task.due_at)}` : ''}`).join('\n') : '• Chưa có task.';
+  const itemLines = items.length ? items.map(item=>`• ${item.title} — ${item.metric === 'count' ? `${item.completed}/${item.target_count}` : item.status === 'completed' ? 'đã hoàn thành' : 'chưa hoàn thành'}`).join('\n') : '• Chưa có kế hoạch tuần.';
+  const checkinLines = checkins.results.length ? checkins.results.map(checkin=>`• C${checkin.id} · ${checkin.item_title}: ${checkin.note} (${formatLocalTime(checkin.occurred_at)})`).join('\n') : '• Chưa có check-in.';
+  return `Navi export — tuần ${currentWeek}\n\nKế hoạch\n${itemLines}\n\nTask gần nhất (tối đa 6)\n${taskLines}\n\nCheck-in tuần này (tối đa 6)\n${checkinLines}\n\nDùng /export json nếu anh cần bản máy đọc được.`;
+}
+
 const AI_RESERVATION_MICROS = 20_000;
 const AI_MONTHLY_CAP_MICROS = 800_000;
 export async function reserveAi(db: D1Database, now = Date.now()): Promise<boolean> {
@@ -554,6 +581,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)
         .bind(id, command.title, normalize(command.title), job.update_id, now, ...args()));
       result = `Đã thêm ${id}: ${command.title}\nKhi xong, anh nhắn /done ${id}.`;
+    } else if (command.kind === 'export') {
+      result = await exportSummary(db,job.chat_id,now,command.format);
     } else if (command.kind === 'systemStatus') {
       result = await systemStatusSummary(db,job.chat_id,now);
     } else if (command.kind === 'insights') {

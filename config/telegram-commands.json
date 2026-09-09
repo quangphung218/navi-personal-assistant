@@ -5,6 +5,7 @@
   { "command": "review", "description": "Tổng kết tuần" },
   { "command": "progress", "description": "Xem tiến độ và lịch sử" },
   { "command": "insights", "description": "Xem mức Navi hiểu check-in" },
+  { "command": "export", "description": "Xuất dữ liệu tuần và task" },
   { "command": "add", "description": "Thêm task mới" },
   { "command": "list", "description": "Xem task đang mở" },
   { "command": "done", "description": "Hoàn thành task theo mã" },

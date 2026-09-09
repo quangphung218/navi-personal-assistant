@@ -10,7 +10,7 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
   | { kind: 'checkInChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkIn'; text: string; date?: { day: number; month: number; year?: number } }
   | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
-  | { kind: 'reminders'; enabled?: boolean }
+  | { kind: 'reminders'; enabled?: boolean } | { kind: 'export'; format: 'markdown'|'json' }
   | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'status' }
   | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
@@ -37,6 +37,8 @@ export function parseCommand(text: string): Command {
   if (/^(?:\/list(?:@\w+)?|anh còn việc gì\??|còn việc gì\??|danh sách(?: công việc)?|xem công việc)$/iu.test(value)) return { kind: 'list', includeDone: false };
   if (/^\/status(?:@\w+)?$/iu.test(value)) return { kind: 'systemStatus' };
   if (/^\/insights(?:@\w+)?$/iu.test(value)) return { kind: 'insights' };
+  if (/^\/export(?:@\w+)?$/iu.test(value)) return { kind: 'export', format: 'markdown' };
+  if (/^\/export(?:@\w+)?\s+json$/iu.test(value)) return { kind: 'export', format: 'json' };
   if (/^(?:em đã thêm task chưa|anh đã thêm task chưa|task đó đã được thêm chưa|trạng thái task)$/iu.test(value)) return { kind: 'status' };
   if (/^\/(?:start|help)(?:@\w+)?$/iu.test(value)) return { kind: 'help' };
   if (/^(?:\/today(?:@\w+)?|hôm nay có gì|hôm nay làm gì)$/iu.test(value)) return { kind: 'today' };
@@ -88,4 +90,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/insights — xem mức Navi hiểu check-in tuần này\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;
+export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/insights — xem mức Navi hiểu check-in tuần này\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;

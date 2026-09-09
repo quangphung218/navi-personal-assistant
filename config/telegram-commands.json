@@ -3,7 +3,6 @@
   { "command": "today", "description": "Việc và tiến độ hôm nay" },
   { "command": "schedule", "description": "Đặt giờ nhắc task" },
   { "command": "review", "description": "Tổng kết tuần" },
-  { "command": "jobs", "description": "Theo dõi job đã apply" },
   { "command": "progress", "description": "Xem tiến độ và lịch sử" },
   { "command": "add", "description": "Thêm task mới" },
   { "command": "list", "description": "Xem task đang mở" },

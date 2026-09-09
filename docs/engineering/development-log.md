@@ -167,3 +167,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Nhịp follow-up: job mới mặc định được nhắc sau 5 ngày nếu vẫn ở `applied`. Reminder có nút `Đã follow-up` và `Dời 2 ngày`; occurrence được đánh dấu ngay khi xếp hàng để Cron không gửi trùng.
 - Tiến độ: một job thêm bằng pipeline đồng thời ghi đúng một lượt apply vào chỉ tiêu tuần. Câu báo apply tự do hiện có vẫn giữ hành vi cũ để không làm thay đổi lịch sử.
 - Telegram: thêm `/jobs` vào menu native và `/help` gồm cú pháp thêm job, cập nhật trạng thái và đặt lại follow-up.
+
+## 2026-09-09 18:15 — Bỏ job pipeline, quay về trợ lý theo mục tiêu
+
+- Quyết định: `apply job` là một ví dụ của tiến độ cam kết, không phải domain riêng của Navi. Pipeline, mã `J...` và follow-up tuyển dụng làm sản phẩm bị thu hẹp và tạo thêm thao tác không cần thiết.
+- Đã dọn: gỡ `/jobs` khỏi menu, trợ giúp, parser, Worker và Cron. Migration mới xoá bảng thử nghiệm; giữ migration tạo bảng trong lịch sử để môi trường D1 đã deploy không bị lệch.
+- Hướng tiếp: xây check-in tiến độ theo mục tiêu/cam kết/thói quen đang hoạt động, để cùng một luồng nhận được apply job, phần đã xong của side project hoặc bất kỳ kết quả đo được nào.

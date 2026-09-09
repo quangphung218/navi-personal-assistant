@@ -1,0 +1,5 @@
+CREATE TABLE IF NOT EXISTS ai_budget (
+  month TEXT PRIMARY KEY,
+  reserved_micros INTEGER NOT NULL DEFAULT 0,
+  calls INTEGER NOT NULL DEFAULT 0
+);

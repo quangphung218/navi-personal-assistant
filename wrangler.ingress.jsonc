@@ -1,0 +1,38 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "account_id": "05b11dc815f7003e3e3f691d748fd623",
+  "compatibility_date": "2026-09-09",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "preview_urls": false,
+  "vars": {
+    "APP_STAGE": "pilot"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "personal-assistant-pilot",
+      "database_id": "9afb8ad9-002e-4cd0-a380-4a398bf147e1",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "personal-assistant-jobs"
+      }
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": {
+      "enabled": true
+    }
+  },
+  "name": "personal-assistant-ingress",
+  "main": "src/entrypoints/ingress.ts",
+  "workers_dev": true
+}

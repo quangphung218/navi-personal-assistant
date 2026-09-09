@@ -1,0 +1,7 @@
+# Local only. Copy to .dev.vars; never commit real values.
+# Credentials are not used by the environment probe.
+TELEGRAM_BOT_TOKEN=""
+TELEGRAM_WEBHOOK_SECRET=""
+OPENROUTER_API_KEY=""
+BOOTSTRAP_CODE=""
+BOOTSTRAP_EXPIRES_AT=""

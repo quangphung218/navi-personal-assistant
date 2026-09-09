@@ -1,0 +1,33 @@
+{
+  "$schema": "../node_modules/wrangler/config-schema.json",
+  "name": "personal-assistant-test",
+  "main": "../src/entrypoints/ingress.ts",
+  "compatibility_date": "2026-09-09",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "vars": {
+    "APP_STAGE": "test",
+    "TELEGRAM_WEBHOOK_SECRET": "test-webhook-secret",
+    "TELEGRAM_BOT_TOKEN": "test-only-token",
+    "OPENROUTER_API_KEY": "test-openrouter-key",
+    "BOOTSTRAP_CODE": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "BOOTSTRAP_EXPIRES_AT": "4102444800000"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "test-db",
+      "database_id": "test-only",
+      "migrations_dir": "../migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "test-jobs"
+      }
+    ]
+  }
+}

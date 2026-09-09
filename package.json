@@ -1,0 +1,35 @@
+{
+  "name": "quangphung-assistant-05b11d",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24 <27"
+  },
+  "scripts": {
+    "dev": "wrangler dev --config wrangler.local.jsonc --local --ip 127.0.0.1 --port 8787",
+    "types": "wrangler types .generated/worker-configuration.d.ts --config tests/wrangler.jsonc --env-interface CloudflareBindings --strict-vars=false",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
+    "build": "wrangler deploy --config wrangler.ingress.jsonc --dry-run --outdir dist/ingress && wrangler deploy --config wrangler.processor.jsonc --dry-run --outdir dist/processor",
+    "check": "npm run types && npm run typecheck && npm test && npm run build",
+    "doctor": "node scripts/doctor.mjs",
+    "cloudflare:login": "wrangler login",
+    "cloudflare:whoami": "wrangler whoami",
+    "pretypes": "node -e \"require('node:fs').mkdirSync('.generated', {recursive:true})\"",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "hono": "4.13.7",
+    "zod": "4.5.4"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.1.6",
+    "@types/node": "24.13.3",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11",
+    "wrangler": "4.129.1"
+  },
+  "overrides": {
+    "sharp": "0.35.4"
+  }
+}

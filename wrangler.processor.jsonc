@@ -1,0 +1,55 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "account_id": "05b11dc815f7003e3e3f691d748fd623",
+  "compatibility_date": "2026-09-09",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "preview_urls": false,
+  "vars": {
+    "APP_STAGE": "pilot"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "personal-assistant-pilot",
+      "database_id": "9afb8ad9-002e-4cd0-a380-4a398bf147e1",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "queues": {
+    "producers": [
+      {
+        "binding": "JOBS_QUEUE",
+        "queue": "personal-assistant-jobs"
+      }
+    ],
+    "consumers": [
+      {
+        "queue": "personal-assistant-jobs",
+        "max_batch_size": 1,
+        "max_batch_timeout": 1,
+        "max_retries": 3,
+        "max_concurrency": 1
+      }
+    ]
+  },
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "traces": {
+      "enabled": false
+    }
+  },
+  "secrets": {
+    "required": ["TELEGRAM_BOT_TOKEN", "OPENROUTER_API_KEY"]
+  },
+  "name": "personal-assistant-processor",
+  "main": "src/entrypoints/processor.ts",
+  "workers_dev": false,
+  "triggers": {
+    "crons": [
+      "*/5 * * * *"
+    ]
+  }
+}

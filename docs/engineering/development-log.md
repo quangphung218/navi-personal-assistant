@@ -180,3 +180,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Chat: các câu kết quả như “Anh đã public Navi lên GitHub” hoặc “Anh đã đọc sách” được đối chiếu với mục kế hoạch hiện hành. Navi chỉ ghi khi có đúng một mục khớp; không khớp hoặc nhiều khả năng thì yêu cầu nói rõ hơn.
 - Dữ liệu: `weekly_checkins` giữ occurrence gắn với `weekly_plan_items`; `/progress` hiển thị trạng thái của các mục hoàn thành hoặc đã có check-in. Luồng apply/chạy bộ cũ vẫn giữ nguyên để bảo toàn lịch sử pilot.
 - Đã kiểm chứng: test bao phủ metric lúc lập tuần, check-in generic, hoàn thành mục tiêu, và không ghi dữ liệu khi câu “việc đó” thiếu ngữ cảnh.
+
+## 2026-09-09 20:05 — Hợp nhất tiến độ vào check-in chung
+
+- Đã làm: câu apply và chạy bộ giờ cũng đi vào `weekly_checkins`, cùng đường với mục tiêu và thói quen khác. Khi đọc một kế hoạch cũ, Navi tự nối các occurrence apply/chạy bộ lịch sử vào đúng cam kết hoặc thói quen để không mất tiến độ đã ghi.
+- Hiển thị và nhắc: `/progress`, dashboard, nhắc tối và review đọc số liệu từ mục kế hoạch/check-in thay vì duy trì hai bộ đếm active.
+- Chỉnh sửa: `/progress` hiển thị mã `C...`; hỗ trợ `/progress edit C... Nội dung mới` và `/progress delete C...`, chỉ áp dụng sau khi anh xác nhận. Audit request giữ lại khi một check-in bị xoá.

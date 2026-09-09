@@ -7,6 +7,7 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
   | { kind: 'progress'; activity: 'job_application'; detail: string }
   | { kind: 'progress'; activity: 'run'; date?: { day: number; month: number; year?: number } }
   | { kind: 'progressChange'; action: 'delete'|'rename'; reference: string; detail?: string }
+  | { kind: 'checkInChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkIn'; text: string }
   | { kind: 'reminders'; enabled?: boolean }
   | { kind: 'status' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
@@ -48,24 +49,27 @@ export function parseCommand(text: string): Command {
     if (action === 'delete' && !detail) return { kind: 'progressChange', action, reference: progressChange[2]!.toUpperCase() };
     if (action === 'rename' && detail && detail.length > 1 && detail.length <= 180) return { kind: 'progressChange', action, reference: progressChange[2]!.toUpperCase(), detail };
   }
+  const checkInChange = value.match(/^\/progress(?:@\w+)?\s+(delete|xóa|xoá|edit|sửa)\s+(C\d+)(?:\s+(.+))?$/iu);
+  if (checkInChange) {
+    const action = /^(?:delete|xóa|xoá)$/iu.test(checkInChange[1]!) ? 'delete' : 'rename';
+    const detail = checkInChange[3]?.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
+    if (action === 'delete' && !detail) return { kind: 'checkInChange', action, reference: checkInChange[2]!.toUpperCase() };
+    if (action === 'rename' && detail && detail.length > 1 && detail.length <= 180) return { kind: 'checkInChange', action, reference: checkInChange[2]!.toUpperCase(), detail };
+  }
   if (/^\/progress(?:@\w+)?$/iu.test(value)) return { kind: 'progressList' };
   if (/^(?:\/week(?:@\w+)?\s+status|tiến độ tuần|tuần này thế nào\??)$/iu.test(value)) return { kind: 'weekStatus' };
   if (/^(?:\/week|\/tuan|lập kế hoạch tuần|kế hoạch tuần)(?:@\w+)?$/iu.test(value)) return { kind: 'week' };
   if (/^(?:\/reminders?(?:@\w+)?\s+(?:on|bật)|bật nhắc(?: tiến độ)?|bật reminder)$/iu.test(value)) return { kind: 'reminders', enabled: true };
   if (/^(?:\/reminders?(?:@\w+)?\s+(?:off|tắt)|tắt nhắc(?: tiến độ)?|tắt reminder)$/iu.test(value)) return { kind: 'reminders', enabled: false };
   if (/^(?:\/reminders?(?:@\w+)?|lịch nhắc|nhắc tiến độ thế nào)$/iu.test(value)) return { kind: 'reminders' };
-  const application = value.match(/^(?:\/log\s+apply\s+|(?:anh\s+)?(?:vừa|đã)\s+(?:apply|ứng tuyển)(?:\s+(?:job|vị trí))?\s+)(.+)$/iu);
-  if (application) {
-    const detail = application[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
-    if (detail.length > 1 && detail.length <= 180) return { kind: 'progress', activity: 'job_application', detail };
-  }
+  if (/^(?:\/log\s+apply\s+|(?:anh\s+)?(?:vừa|đã)\s+(?:apply|ứng tuyển)(?:\s+(?:job|vị trí))?\s+).{2,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   const datedRun = value.match(/^ngày\s+(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?\s+(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?[.!]?$/iu);
   if (datedRun) {
     const day = Number(datedRun[1]), month = Number(datedRun[2]);
     const year = datedRun[3] ? Number(datedRun[3]) : undefined;
-    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { kind: 'progress', activity: 'run', date: { day, month, year } };
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   }
-  if (/^(?:\/log\s+run|(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?)[.!]?$/iu.test(value)) return { kind: 'progress', activity: 'run' };
+  if (/^(?:\/log\s+run|(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?)[.!]?$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   if (/^(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:xong|hoàn thành|làm xong|public|đăng|viết|đọc|học)\b[\s\S]{1,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   if (/^(?:đúng|đúng rồi|ok|okay|đồng ý|xác nhận|yes)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'confirm' };
   if (/^(?:không|không phải|hủy|huỷ|cancel|no)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'reject' };

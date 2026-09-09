@@ -3,6 +3,7 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
   | { kind: 'week' } | { kind: 'weekStatus' }
   | { kind: 'progress'; activity: 'job_application'; detail: string }
   | { kind: 'progress'; activity: 'run'; date?: { day: number; month: number; year?: number } }
+  | { kind: 'reminders'; enabled?: boolean }
   | { kind: 'status' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
@@ -22,6 +23,9 @@ export function parseCommand(text: string): Command {
   if (/^\/(?:start|help)(?:@\w+)?$/iu.test(value)) return { kind: 'help' };
   if (/^(?:\/week(?:@\w+)?\s+status|\/progress(?:@\w+)?|tiến độ tuần|tuần này thế nào\??)$/iu.test(value)) return { kind: 'weekStatus' };
   if (/^(?:\/week|\/tuan|lập kế hoạch tuần|kế hoạch tuần)(?:@\w+)?$/iu.test(value)) return { kind: 'week' };
+  if (/^(?:\/reminders?(?:@\w+)?\s+(?:on|bật)|bật nhắc(?: tiến độ)?|bật reminder)$/iu.test(value)) return { kind: 'reminders', enabled: true };
+  if (/^(?:\/reminders?(?:@\w+)?\s+(?:off|tắt)|tắt nhắc(?: tiến độ)?|tắt reminder)$/iu.test(value)) return { kind: 'reminders', enabled: false };
+  if (/^(?:\/reminders?(?:@\w+)?|lịch nhắc|nhắc tiến độ thế nào)$/iu.test(value)) return { kind: 'reminders' };
   const application = value.match(/^(?:\/log\s+apply\s+|(?:anh\s+)?(?:vừa|đã)\s+(?:apply|ứng tuyển)(?:\s+(?:job|vị trí))?\s+)(.+)$/iu);
   if (application) {
     const detail = application[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
@@ -45,4 +49,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = 'Em đã sẵn sàng ghi công việc cho anh.\n\nThêm việc viết README\n/week — lập kế hoạch tuần\n/week status — tiến độ tuần\nAnh vừa apply job Backend Developer\nHôm nay anh đã chạy bộ\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nKết quả apply và chạy bộ được ghi theo xác nhận của anh.';
+export const help = 'Em đã sẵn sàng ghi công việc cho anh.\n\nThêm việc viết README\n/week — lập kế hoạch tuần\n/week status — tiến độ tuần\n/reminders — xem nhắc tiến độ\nAnh vừa apply job Backend Developer\nHôm nay anh đã chạy bộ\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nKết quả apply và chạy bộ được ghi theo xác nhận của anh.';

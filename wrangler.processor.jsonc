@@ -36,9 +36,13 @@
   },
   "observability": {
     "enabled": true,
-    "head_sampling_rate": 1,
+    "logs": {
+      "enabled": true,
+      "head_sampling_rate": 1
+    },
     "traces": {
-      "enabled": false
+      "enabled": true,
+      "head_sampling_rate": 0.1
     }
   },
   "secrets": {

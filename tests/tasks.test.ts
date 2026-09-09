@@ -6,8 +6,9 @@ import approvalsMigration from '../migrations/0003_approvals.sql?raw';
 import weeklyMigration from '../migrations/0004_weekly_plans.sql?raw';
 import contextMigration from '../migrations/0005_conversation_context.sql?raw';
 import progressMigration from '../migrations/0006_weekly_progress.sql?raw';
+import remindersMigration from '../migrations/0007_reminders_and_metrics.sql?raw';
 import ingress from '../src/entrypoints/ingress';
-import { accept, processNext, deliverNext, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
+import { accept, processNext, deliverNext, enqueueWeeklyProgressReminder, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
 import type { TelegramUpdate } from '../src/adapters/telegram';
 const db = env.DB;
@@ -26,8 +27,8 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
@@ -78,6 +79,27 @@ describe('task conversation on real D1 bindings',()=>{
     const events=await db.prepare("SELECT kind,label FROM weekly_progress_events WHERE kind='run'").all<{kind:string;label:string}>();
     expect(aiCalls).toBe(0);
     expect(events.results).toEqual([{kind:'run',label:'2026-09-07'}]);
+  });
+  it('queues one evening reminder for incomplete weekly progress and records delivery timing',async()=>{
+    const now=Date.UTC(2026,8,9,13);
+    await accept(db,update(1,'/start secret'),true,now);await processNext(db,now);await replies();
+    await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at)
+      VALUES('2026-09-07','123','Ship Navi','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách',?)`).bind(now).run();
+    expect(await enqueueWeeklyProgressReminder(db,now)).toBe(true);
+    expect(await enqueueWeeklyProgressReminder(db,now+5*60_000)).toBe(false);
+    const sent=await replies();
+    expect(sent).toHaveLength(1);
+    expect(sent[0]).toContain('Apply 0/5');
+    expect(sent[0]).toContain('Chạy bộ 0/3');
+    expect(await db.prepare("SELECT delivery_started_at,delivery_finished_at,delivery_status FROM job_metrics WHERE job_id=(SELECT job_id FROM weekly_reminders)").first())
+      .toMatchObject({delivery_status:'sent'});
+  });
+  it('lets the owner turn weekly reminders off and back on',async()=>{
+    await link();await replies();
+    await receive(update(2,'/reminders off'));await processNext(db);await replies();
+    expect(await db.prepare('SELECT weekly_progress_enabled FROM reminder_preferences WHERE chat_id=?').bind('123').first()).toMatchObject({weekly_progress_enabled:0});
+    await receive(update(3,'bật nhắc tiến độ'));await processNext(db);
+    expect((await replies()).at(-1)).toContain('Đã bật nhắc');
   });
   it('proposes a natural task and only creates it after confirmation',async()=>{
     await link(); await receive(update(2,'À chắc anh phải thêm task apply 5 job trong tuần này')); await processNext(db);

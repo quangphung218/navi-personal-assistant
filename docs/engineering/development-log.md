@@ -125,3 +125,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: thêm regression test từ nguyên văn tin nhắn thực tế, xác nhận không gọi AI và ghi ngày `2026-09-07`.
 - Vận hành: sáu delivery gần nhất mất khoảng 2,5–8 giây, ngoại lệ cao nhất gần 58 giây. Nhánh deterministic mới loại bỏ thời gian OpenRouter khỏi cập nhật chạy bộ có ngày.
 - Bước tiếp theo: theo dõi độ trễ sau deploy; sau đó thêm telemetry theo từng giai đoạn ingress, xử lý và gửi Telegram nếu vẫn vượt mục tiêu.
+
+## 2026-09-09 16:00 — Nhắc tiến độ tuần và telemetry v1
+
+- Đã làm: Cron kiểm tra kế hoạch tuần mỗi 5 phút và gửi một nhắc tiến độ lúc 20:00 theo giờ Việt Nam khi chỉ tiêu apply hoặc chạy bộ còn thiếu. Mỗi tuần/ngày có unique reminder nên không gửi trùng; không gửi bù sau khung giờ.
+- Kiểm soát: `/reminders` xem trạng thái, `/reminders off` tắt và `/reminders on` bật lại. Telegram retry chỉ retry delivery, không tạo thêm reminder.
+- Telemetry: thêm `job_metrics` chỉ chứa mốc thời gian queue, xử lý và giao tin cùng trạng thái delivery; không lưu nội dung chat. Bật Workers Logs và trace sampling 10% để điều tra lỗi runtime khi cần.
+- Đã kiểm chứng: test D1/Workers bao phủ incomplete plan, một nhắc duy nhất trong ngày, delivery và tắt/bật preference.

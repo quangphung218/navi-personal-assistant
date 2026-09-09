@@ -6,7 +6,8 @@ type Job = { id: number; update_id: number; chat_id: string; text: string; attem
 type Task = { id: string; title: string; status: 'open' | 'done'; revision: number };
 type Approval = { id: number; source_update: number; title: string; status: 'pending' };
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
-type WeeklyPlan = { week_start: string; goal: string; commitment: string; habit1: string; habit2: string };
+type WeeklyPlan = { week_start: string; chat_id: string; goal: string; commitment: string; habit1: string; habit2: string };
+type ReminderPreference = { weekly_progress_enabled: number; delivery_hour: number };
 
 function localDate(now: number): string {
   return new Date(now + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -33,6 +34,10 @@ function weekEnd(start: string): string {
   return value.toISOString().slice(0, 10);
 }
 
+function localHour(now: number): number {
+  return new Date(now + 7 * 60 * 60 * 1000).getUTCHours();
+}
+
 function targetFrom(text: string): number | undefined {
   const value = Number(text.match(/\b(\d{1,3})\b/u)?.[1]);
   return Number.isInteger(value) && value > 0 ? value : undefined;
@@ -57,6 +62,7 @@ export async function accept(db: D1Database, update: TelegramUpdate, bootstrap: 
   statements.push(db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at)
     SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
     .bind(update.update_id, userId, chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, now, userId, chatId));
+  statements.push(db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at) SELECT id,created_at FROM jobs WHERE update_id=?').bind(update.update_id));
   statements.push(db.prepare(`INSERT OR IGNORE INTO conversation_messages(chat_id,direction,text,update_id,created_at)
     SELECT ?, 'inbound', ?, ?, ? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
     .bind(chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, update.update_id, now, userId, chatId));
@@ -87,6 +93,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
   try {
     const job = await db.prepare("SELECT id,update_id,chat_id,text,attempts FROM jobs WHERE status='pending' ORDER BY id LIMIT 1").first<Job>();
     if (!job) return false;
+    await db.prepare('UPDATE job_metrics SET processing_started_at=COALESCE(processing_started_at,?) WHERE job_id=?').bind(now, job.id).run();
     const guard = `EXISTS(SELECT 1 FROM owner WHERE id=1 AND lease_token=? AND lease_until>?) AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='pending')`;
     const args = () => [token, Date.now(), job.id];
     const statements: D1PreparedStatement[] = [];
@@ -97,7 +104,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'reminders' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm') {
@@ -127,6 +134,18 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       const date = weekStart(now);
       statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,week_start,created_at) SELECT 1,?,'goal',?,? WHERE ${guard}`).bind(job.chat_id, date, now, ...args()));
       result = 'Mình lập kế hoạch tuần này nhé. Mục tiêu công việc quan trọng nhất của anh là gì?';
+    } else if (command.kind === 'reminders') {
+      const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(job.chat_id).first<ReminderPreference>();
+      if (command.enabled === undefined) {
+        const enabled = preference?.weekly_progress_enabled ?? 1, hour = preference?.delivery_hour ?? 20;
+        result = enabled ? `Nhắc tiến độ tuần đang bật lúc ${String(hour).padStart(2,'0')}:00 mỗi tối (giờ Việt Nam). Dùng /reminders off để tắt.`
+          : 'Nhắc tiến độ tuần đang tắt. Dùng /reminders on để bật lại lúc 20:00 mỗi tối.';
+      } else {
+        statements.push(db.prepare(`INSERT INTO reminder_preferences(chat_id,weekly_progress_enabled,delivery_hour,updated_at) VALUES(?,?,20,?)
+          ON CONFLICT(chat_id) DO UPDATE SET weekly_progress_enabled=excluded.weekly_progress_enabled,updated_at=excluded.updated_at WHERE ${guard}`)
+          .bind(job.chat_id, command.enabled ? 1 : 0, now, ...args()));
+        result = command.enabled ? 'Đã bật nhắc tiến độ tuần lúc 20:00 mỗi tối (giờ Việt Nam).' : 'Đã tắt nhắc tiến độ tuần. Khi cần bật lại, anh nhắn /reminders on.';
+      }
     } else if (command.kind === 'weekStatus' || command.kind === 'progress') {
       const currentWeek = weekStart(now);
       const plan = await db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
@@ -222,7 +241,9 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     statements.push(db.prepare(`UPDATE jobs SET status=?,result=? WHERE id=? AND ${guard}`)
       .bind(job.attempts >= 3 ? 'failed' : 'done', result, job.id, ...args()));
     const completed = await db.batch(statements);
-    return (completed.at(-1)?.meta.changes ?? 0) > 0;
+    const didComplete = (completed.at(-1)?.meta.changes ?? 0) > 0;
+    if (didComplete) await db.prepare('UPDATE job_metrics SET processing_finished_at=? WHERE job_id=?').bind(Date.now(), job.id).run();
+    return didComplete;
   } catch {
     await db.prepare(`UPDATE jobs SET attempts=attempts+1 WHERE id=(SELECT id FROM jobs WHERE status='pending' ORDER BY id LIMIT 1)
       AND EXISTS(SELECT 1 FROM owner WHERE lease_token=?)`).bind(token).run();
@@ -244,13 +265,50 @@ export async function deliverNext(db: D1Database, sender: Sender, now = Date.now
   const item = await db.prepare('SELECT job_id,chat_id,text,attempts FROM deliveries WHERE claim_token=?').bind(token)
     .first<{ job_id: number; chat_id: string; text: string; attempts: number }>();
   if (!item) return false;
+  await db.prepare('UPDATE job_metrics SET delivery_started_at=COALESCE(delivery_started_at,?) WHERE job_id=?').bind(now, item.job_id).run();
   let outcome;
   try { outcome = await sender(item.chat_id, item.text); } catch { outcome = { kind: 'unknown' as const }; }
   const status = outcome.kind === 'retry' ? (item.attempts < 3 ? 'pending' : 'failed') : outcome.kind;
   await db.prepare('UPDATE deliveries SET status=?,next_at=?,message_id=? WHERE job_id=? AND claim_token=?')
     .bind(status, outcome.kind === 'retry' ? now + outcome.after * 1000 : 0, outcome.kind === 'sent' ? outcome.messageId : null, item.job_id, token).run();
+  await db.prepare('UPDATE job_metrics SET delivery_finished_at=?,delivery_status=? WHERE job_id=?').bind(Date.now(), status, item.job_id).run();
   return true;
 }
 export async function hasPending(db: D1Database) {
   return Boolean(await db.prepare(`SELECT 1 FROM jobs WHERE status='pending' UNION ALL SELECT 1 FROM deliveries WHERE (status='pending' AND next_at<=?) OR (status='sending' AND claimed_at<?) LIMIT 1`).bind(Date.now(), Date.now()-60000).first());
+}
+
+export async function enqueueWeeklyProgressReminder(db: D1Database, now = Date.now()): Promise<boolean> {
+  const currentWeek = weekStart(now), date = localDate(now);
+  const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND status='active' LIMIT 1")
+    .bind(currentWeek).first<WeeklyPlan>();
+  if (!plan) return false;
+  const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(plan.chat_id).first<ReminderPreference>();
+  const hour = preference?.delivery_hour ?? 20;
+  if ((preference?.weekly_progress_enabled ?? 1) !== 1 || localHour(now) !== hour) return false;
+  const counts = await db.prepare(`SELECT
+    SUM(CASE WHEN kind='job_application' THEN 1 ELSE 0 END) AS applications,
+    SUM(CASE WHEN kind='run' THEN 1 ELSE 0 END) AS runs
+    FROM weekly_progress_events WHERE week_start=?`).bind(currentWeek).first<{applications:number|null;runs:number|null}>();
+  const applications = counts?.applications ?? 0, runs = counts?.runs ?? 0;
+  const applicationTarget = targetFrom(plan.commitment);
+  const runHabit = [plan.habit1, plan.habit2].find(value => /chạy|run/iu.test(value));
+  const runTarget = runHabit ? targetFrom(runHabit) : undefined;
+  const pending = [
+    applicationTarget && applications < applicationTarget ? `Apply ${applications}/${applicationTarget}` : undefined,
+    runTarget && runs < runTarget ? `Chạy bộ ${runs}/${runTarget}` : undefined,
+  ].filter((value): value is string => Boolean(value));
+  if (!pending.length) return false;
+  const updateId = -Number(date.replaceAll('-',''));
+  const text = `Nhắc tiến độ hôm nay (${date.slice(8,10)}/${date.slice(5,7)}): ${pending.join(' · ')}.\n\nAnh cập nhật khi hoàn thành, hoặc dùng /reminders off để tắt nhắc.`;
+  const results = await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)
+      SELECT ?,owner.user_id,owner.chat_id,?,?, 'done', ? FROM owner
+      WHERE NOT EXISTS(SELECT 1 FROM weekly_reminders WHERE week_start=? AND local_date=?)`)
+      .bind(updateId, text, now, text, currentWeek, date),
+    db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text) SELECT id,chat_id,result FROM jobs WHERE update_id=?').bind(updateId),
+    db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
+    db.prepare('INSERT OR IGNORE INTO weekly_reminders(week_start,local_date,job_id,created_at) SELECT ?,?,id,? FROM jobs WHERE update_id=?').bind(currentWeek, date, now, updateId),
+  ]);
+  return (results[0]?.meta.changes ?? 0) === 1;
 }

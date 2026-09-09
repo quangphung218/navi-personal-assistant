@@ -5,6 +5,7 @@ import type { Assistant } from '../../adapters/openrouter';
 type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number };
 type Task = { id: string; title: string; status: 'open' | 'done'; revision: number };
 type Approval = { id: number; source_update: number; title: string; status: 'pending' };
+type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
 export async function ownerFor(db: D1Database) {
   return db.prepare('SELECT user_id,chat_id FROM owner WHERE id=1').first<{ user_id: string; chat_id: string }>();
 }
@@ -49,8 +50,40 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const statements: D1PreparedStatement[] = [];
     const command = parseCommand(job.text);
     let result: string;
+    const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
+    } else if (draft && command.kind !== 'week' && command.kind !== 'help') {
+      const value = job.text.trim().replace(/\s+/g, ' ');
+      if (draft.step === 'confirm') {
+        if (command.kind === 'confirm') {
+          statements.push(db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at) SELECT ?,?,?,?,?,?,? WHERE ${guard}`)
+            .bind(draft.week_start, draft.chat_id, draft.goal, draft.commitment, draft.habit1, draft.habit2, now, ...args()));
+          statements.push(db.prepare(`DELETE FROM weekly_drafts WHERE id=1 AND ${guard}`).bind(...args()));
+          result = `Đã lưu kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${draft.habit2}`;
+        } else if (command.kind === 'reject') {
+          statements.push(db.prepare(`DELETE FROM weekly_drafts WHERE id=1 AND ${guard}`).bind(...args()));
+          result = 'Đã bỏ bản nháp kế hoạch tuần. Khi sẵn sàng anh nhắn /week để làm lại.';
+        } else result = 'Anh trả lời “đúng” để lưu kế hoạch, hoặc “hủy” để làm lại.';
+      } else if (value.length < 2 || value.length > 180) result = 'Anh gửi một câu ngắn từ 2 đến 180 ký tự nhé.';
+      else if (draft.step === 'goal') {
+        statements.push(db.prepare(`UPDATE weekly_drafts SET goal=?,step='commitment' WHERE id=1 AND ${guard}`).bind(value, ...args()));
+        result = 'Mục tiêu đã ghi. Cam kết cá nhân tuần này của anh là gì?';
+      } else if (draft.step === 'commitment') {
+        statements.push(db.prepare(`UPDATE weekly_drafts SET commitment=?,step='habit1' WHERE id=1 AND ${guard}`).bind(value, ...args()));
+        result = 'Đã ghi cam kết. Thói quen thứ nhất anh muốn theo dõi là gì?';
+      } else if (draft.step === 'habit1') {
+        statements.push(db.prepare(`UPDATE weekly_drafts SET habit1=?,step='habit2' WHERE id=1 AND ${guard}`).bind(value, ...args()));
+        result = 'Đã ghi thói quen thứ nhất. Thói quen thứ hai là gì?';
+      } else {
+        statements.push(db.prepare(`UPDATE weekly_drafts SET habit2=?,step='confirm' WHERE id=1 AND ${guard}`).bind(value, ...args()));
+        result = `Em tóm tắt kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${value}\n\nAnh trả lời “đúng” để lưu, hoặc “hủy” để bỏ.`;
+      }
+    } else if (command.kind === 'week') {
+      const weekStart = new Date(now); weekStart.setUTCHours(0,0,0,0); const day = weekStart.getUTCDay(); weekStart.setUTCDate(weekStart.getUTCDate() - (day === 0 ? 6 : day - 1));
+      const date = weekStart.toISOString().slice(0,10);
+      statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,week_start,created_at) SELECT 1,?,'goal',?,? WHERE ${guard}`).bind(job.chat_id, date, now, ...args()));
+      result = 'Mình lập kế hoạch tuần này nhé. Mục tiêu công việc quan trọng nhất của anh là gì?';
     } else if (command.kind === 'add') {
       const id = `T${job.update_id}`;
       statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)

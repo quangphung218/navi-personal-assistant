@@ -51,3 +51,12 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: SVG dùng viewBox vuông, không phụ thuộc font hoặc runtime, hiển thị được ở kích thước nhỏ.
 - Chưa làm / giới hạn: chưa có wordmark hoàn chỉnh, favicon PNG/ICO hoặc kiểm tra hiển thị Telegram thực tế.
 - Bước tiếp theo: dùng mark này trong web/admin surface khi bắt đầu xây giao diện; tiếp tục flow kế hoạch tuần.
+
+## 2026-09-09 10:45 — Guided weekly plan
+
+- Bối cảnh: cần biến mục tiêu, cam kết và thói quen của tuần mẫu thành dữ liệu có xác nhận.
+- Đã làm: thêm `weekly_drafts` và `weekly_plans` trong `migrations/0004_weekly_plans.sql`; `/week` dẫn qua một mục tiêu, một cam kết và hai thói quen, rồi chờ `đúng` hoặc `hủy`.
+- Quyết định: bản nháp chỉ thuộc owner chat, mỗi câu trả lời lấp một bước; không lưu kế hoạch trước khi xác nhận cuối.
+- Đã kiểm chứng: 19 test runtime D1/Workers và typecheck qua.
+- Chưa làm / giới hạn: chưa có nhắc lịch, tracking occurrence hoặc tự tính tiến độ 5 job/3 buổi chạy.
+- Bước tiếp theo: thêm tiêu chí định lượng và nhắc tiến độ cho các cam kết đã lưu.

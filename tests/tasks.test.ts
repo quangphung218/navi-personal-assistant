@@ -3,6 +3,7 @@ import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test'
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import migration from '../migrations/0001_tasks.sql?raw';
 import approvalsMigration from '../migrations/0003_approvals.sql?raw';
+import weeklyMigration from '../migrations/0004_weekly_plans.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -23,10 +24,17 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
+  it('guides a weekly plan and saves only after confirmation',async()=>{
+    await link();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi MVP'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách 2 buổi']] as const){await receive(update(id,text));await processNext(db);}
+    expect(await db.prepare('SELECT * FROM weekly_plans').first()).toBeNull();
+    await receive(update(7,'đúng')); await processNext(db);
+    expect(await db.prepare('SELECT goal,commitment,habit1,habit2 FROM weekly_plans').first()).toMatchObject({goal:'Ship Navi MVP',commitment:'Apply 5 jobs',habit1:'Chạy bộ 3 buổi',habit2:'Đọc sách 2 buổi'});
+  });
   it('proposes a natural task and only creates it after confirmation',async()=>{
     await link(); await receive(update(2,'À chắc anh phải thêm task apply 5 job trong tuần này')); await processNext(db);
     expect(await tasks(db)).toEqual([]);

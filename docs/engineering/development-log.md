@@ -145,3 +145,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Kiểm soát: mọi sửa/xoá tạo một yêu cầu chờ. Chỉ `đúng` mới thay đổi dữ liệu; `hủy` giữ nguyên. Mỗi chat chỉ có một yêu cầu chỉnh tiến độ đang chờ để không xác nhận nhầm.
 - Dữ liệu: thêm `progress_change_requests` làm audit trail cho yêu cầu đã duyệt hoặc từ chối; không lưu lại một occurrence đã xoá như dữ liệu active.
 - Đã kiểm chứng: test D1/Workers bao phủ danh sách, đổi tên, hủy xoá và xoá sau xác nhận.
+
+## 2026-09-09 17:30 — Inline action buttons trên Telegram
+
+- Đã làm: thêm nút `Đúng` và `Hủy` cho bản nháp kế hoạch, đề xuất task và chỉnh tiến độ; thêm `Xem tiến độ` sau khi ghi nhận kết quả.
+- An toàn: callback mang mã của đối tượng đang chờ (`weekly`, `task`, `progress`), được kiểm tra với owner chat và trạng thái pending. Nút cũ không thể xác nhận nhầm một yêu cầu khác.
+- Độ bền: reply markup được lưu cùng outbox delivery, nên retry Telegram vẫn gửi đúng nút. Callback query được trả lời ngay để Telegram bỏ trạng thái loading.
+- Đã kiểm chứng: test sử dụng callback scoped để duyệt một task và kiểm tra markup được giao cùng tin nhắn.

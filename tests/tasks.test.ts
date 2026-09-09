@@ -8,6 +8,7 @@ import contextMigration from '../migrations/0005_conversation_context.sql?raw';
 import progressMigration from '../migrations/0006_weekly_progress.sql?raw';
 import remindersMigration from '../migrations/0007_reminders_and_metrics.sql?raw';
 import correctionsMigration from '../migrations/0008_progress_corrections.sql?raw';
+import inlineActionsMigration from '../migrations/0009_inline_actions.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueWeeklyProgressReminder, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -30,7 +31,7 @@ async function replies() {
 }
 beforeEach(async()=>{
   for(const table of ['progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -95,7 +96,7 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await replies()).at(-1)).toContain('P1 · Apply — Backend Developer');
     await receive(update(10,'/progress edit P1 Senior Backend Developer'));await processNext(db);
     expect(await db.prepare('SELECT label FROM weekly_progress_events WHERE id=1').first()).toMatchObject({label:'Backend Developer'});
-    expect((await replies()).at(-1)).toContain('trả lời “đúng”');
+    expect((await replies()).at(-1)).toContain('bấm nút');
     await receive(update(11,'đúng'));await processNext(db);await replies();
     expect(await db.prepare('SELECT label FROM weekly_progress_events WHERE id=1').first()).toMatchObject({label:'Senior Backend Developer'});
     await receive(update(12,'/progress delete P1'));await processNext(db);await replies();
@@ -127,10 +128,12 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await replies()).at(-1)).toContain('Đã bật nhắc');
   });
   it('proposes a natural task and only creates it after confirmation',async()=>{
-    await link(); await receive(update(2,'À chắc anh phải thêm task apply 5 job trong tuần này')); await processNext(db);
+    await link(); await replies(); await receive(update(2,'À chắc anh phải thêm task apply 5 job trong tuần này')); await processNext(db);
     expect(await tasks(db)).toEqual([]);
-    expect((await replies()).at(-1)).toContain('trả lời “đúng”');
-    await receive(update(3,'đúng')); await processNext(db);
+    let markup: unknown;
+    await deliverNext(db,async (_chat,_text,buttons)=>{markup=buttons;return {kind:'sent',messageId:1};});
+    expect(markup).toEqual({inline_keyboard:[[{text:'Đúng',callback_data:'_navi:confirm:task:2'},{text:'Hủy',callback_data:'_navi:reject:task:2'}]]});
+    await receive(update(3,'_navi:confirm:task:2')); await processNext(db);
     expect(await tasks(db)).toMatchObject([{id:'T2',title:'apply 5 job trong tuần này',status:'open'}]);
   });
   it('rejects a natural task proposal without creating a task',async()=>{

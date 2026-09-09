@@ -1,5 +1,5 @@
 export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference: string }
-  | { kind: 'list'; includeDone: boolean } | { kind: 'confirm' } | { kind: 'reject' }
+  | { kind: 'list'; includeDone: boolean } | { kind: 'confirm'; target?: string } | { kind: 'reject'; target?: string }
   | { kind: 'week' } | { kind: 'weekStatus' } | { kind: 'progressList' }
   | { kind: 'progress'; activity: 'job_application'; detail: string }
   | { kind: 'progress'; activity: 'run'; date?: { day: number; month: number; year?: number } }
@@ -10,6 +10,9 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
 export function parseCommand(text: string): Command {
   const value = text.trim();
+  const callback = value.match(/^_navi:(confirm|reject):([a-z]+:[a-z0-9-]+)$/iu);
+  if (callback) return { kind: callback[1] === 'confirm' ? 'confirm' : 'reject', target: callback[2]!.toLowerCase() };
+  if (/^_navi:show:progress$/iu.test(value)) return { kind: 'progressList' };
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
     const title = add[1]!.trim().replace(/\s+/g, ' ');

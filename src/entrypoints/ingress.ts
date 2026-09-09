@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { equalSecret, limitedJson } from '../adapters/security';
-import { updateSchema } from '../adapters/telegram';
+import { answerCallback, updateSchema } from '../adapters/telegram';
 import { accept, ownerFor } from '../modules/execution/store';
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
@@ -12,7 +12,8 @@ app.post('/webhooks/telegram', async c => {
   try { raw = await limitedJson(c.req.raw); } catch { return c.json({error:'invalid_body'},400); }
   const parsed = updateSchema.safeParse(raw);
   if (!parsed.success) return c.json({error:'invalid_update'},400);
-  const update = parsed.data, message = update.message;
+  const update = parsed.data;
+  const message = update.message ?? (update.callback_query ? { from: update.callback_query.from, chat: update.callback_query.message.chat, text: update.callback_query.data } : undefined);
   if (!message || message.chat.type !== 'private' || message.from.is_bot || !message.text) return c.json({ok:true});
   try {
     const owner = await ownerFor(c.env.DB);
@@ -23,11 +24,12 @@ app.post('/webhooks/telegram', async c => {
       bootstrap = await equalSecret(code,c.env.BOOTSTRAP_CODE);
       if (!bootstrap) return c.json({ok:true});
     } else if (owner.user_id !== String(message.from.id) || owner.chat_id !== String(message.chat.id)) return c.json({ok:true});
-    const accepted = await accept(c.env.DB,update,bootstrap);
+    const accepted = await accept(c.env.DB,{...update,message},bootstrap);
     if (accepted) {
       // A failed publication is recovered from durable jobs by cron.
       c.executionCtx.waitUntil(c.env.JOBS_QUEUE.send({wake:true}).catch(() => { console.error(JSON.stringify({event:'dispatch_failed'})); }));
     }
+    if (update.callback_query) c.executionCtx.waitUntil(answerCallback(c.env.TELEGRAM_BOT_TOKEN, update.callback_query.id));
     return c.json({ok:true});
   } catch { return c.json({error:'storage_unavailable'},503); }
 });

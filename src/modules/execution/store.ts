@@ -1,5 +1,5 @@
 import { help, normalize, parseCommand, parseNaturalAdd } from '../work/commands';
-import type { TelegramUpdate, Sender } from '../../adapters/telegram';
+import type { ReplyMarkup, TelegramUpdate, Sender } from '../../adapters/telegram';
 import type { Assistant } from '../../adapters/openrouter';
 
 type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number };
@@ -62,6 +62,24 @@ function formatProgressEvents(events: ProgressEvent[]): string {
     + (events.length > 20 ? '\nĐang hiển thị 20 lượt gần nhất.' : '')
     + '\n\nSửa apply: /progress edit P... Tên mới\nXoá lượt: /progress delete P...';
 }
+
+function confirmationButtons(target: string): ReplyMarkup {
+  return { inline_keyboard: [[
+    { text: 'Đúng', callback_data: `_navi:confirm:${target}` },
+    { text: 'Hủy', callback_data: `_navi:reject:${target}` },
+  ]] };
+}
+
+const progressButton: ReplyMarkup = { inline_keyboard: [[{ text: 'Xem tiến độ', callback_data: '_navi:show:progress' }]] };
+
+function readReplyMarkup(value: string|null): ReplyMarkup | undefined {
+  if (!value) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== 'object' || !('inline_keyboard' in parsed) || !Array.isArray(parsed.inline_keyboard)) return undefined;
+    return parsed as ReplyMarkup;
+  } catch { return undefined; }
+}
 export async function ownerFor(db: D1Database) {
   return db.prepare('SELECT user_id,chat_id FROM owner WHERE id=1').first<{ user_id: string; chat_id: string }>();
 }
@@ -113,21 +131,22 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const recent = (await db.prepare("SELECT direction,text FROM conversation_messages WHERE chat_id=? ORDER BY created_at DESC,id DESC LIMIT 12").bind(job.chat_id).all<{direction:'inbound'|'outbound';text:string}>()).results.reverse()
       .map(m => `${m.direction === 'inbound' ? 'Anh' : 'Navi'}: ${m.text.slice(0, 500)}`).join('\n');
     let result: string;
+    let replyMarkup: ReplyMarkup | undefined;
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
     } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'reminders' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
-        if (command.kind === 'confirm') {
+        if (command.kind === 'confirm' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
           statements.push(db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at) SELECT ?,?,?,?,?,?,? WHERE ${guard}`)
             .bind(draft.week_start, draft.chat_id, draft.goal, draft.commitment, draft.habit1, draft.habit2, now, ...args()));
           statements.push(db.prepare(`DELETE FROM weekly_drafts WHERE id=1 AND ${guard}`).bind(...args()));
           result = `Đã lưu kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${draft.habit2}`;
-        } else if (command.kind === 'reject') {
+        } else if (command.kind === 'reject' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
           statements.push(db.prepare(`DELETE FROM weekly_drafts WHERE id=1 AND ${guard}`).bind(...args()));
           result = 'Đã bỏ bản nháp kế hoạch tuần. Khi sẵn sàng anh nhắn /week để làm lại.';
-        } else result = 'Anh trả lời “đúng” để lưu kế hoạch, hoặc “hủy” để làm lại.';
+        } else result = 'Anh dùng nút bên trên hoặc trả lời “đúng” để lưu kế hoạch, “hủy” để làm lại.';
       } else if (value.length < 2 || value.length > 180) result = 'Anh gửi một câu ngắn từ 2 đến 180 ký tự nhé.';
       else if (draft.step === 'goal') {
         statements.push(db.prepare(`UPDATE weekly_drafts SET goal=?,step='commitment' WHERE id=1 AND ${guard}`).bind(value, ...args()));
@@ -140,7 +159,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         result = 'Đã ghi thói quen thứ nhất. Thói quen thứ hai là gì?';
       } else {
         statements.push(db.prepare(`UPDATE weekly_drafts SET habit2=?,step='confirm' WHERE id=1 AND ${guard}`).bind(value, ...args()));
-        result = `Em tóm tắt kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${value}\n\nAnh trả lời “đúng” để lưu, hoặc “hủy” để bỏ.`;
+        result = `Em tóm tắt kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${value}\n\nAnh bấm nút để lưu hoặc bỏ.`;
+        replyMarkup = confirmationButtons(`weekly:${draft.week_start}`);
       }
     } else if (command.kind === 'week') {
       const date = weekStart(now);
@@ -187,6 +207,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
                 SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek, command.activity, label, normalized, job.update_id, now, ...args()));
               if (command.activity === 'job_application') applications += 1; else runs += 1;
               result = `${command.activity === 'job_application' ? `Đã ghi nhận anh apply: ${label}.` : `Đã ghi nhận buổi chạy ngày ${label}.`}\n\n${formatProgress(plan, applications, runs)}`;
+              replyMarkup = progressButton;
             }
           }
         } else if (command.kind === 'progressList') {
@@ -211,12 +232,14 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
               else {
                 statements.push(db.prepare(`INSERT INTO progress_change_requests(chat_id,event_id,action,new_label,created_at)
                   SELECT ?,?,?,?,? WHERE ${guard}`).bind(job.chat_id, event.id, 'rename', command.detail!, now, ...args()));
-                result = `Anh muốn đổi ${command.reference} từ “${event.label}” thành “${command.detail}”. Anh trả lời “đúng” để xác nhận, hoặc “hủy” để giữ nguyên.`;
+                result = `Anh muốn đổi ${command.reference} từ “${event.label}” thành “${command.detail}”. Anh bấm nút để xác nhận hoặc giữ nguyên.`;
+                replyMarkup = confirmationButtons(`progress:${event.id}`);
               }
             } else {
               statements.push(db.prepare(`INSERT INTO progress_change_requests(chat_id,event_id,action,created_at)
                 SELECT ?,?,?,? WHERE ${guard}`).bind(job.chat_id, event.id, 'delete', now, ...args()));
-              result = `Anh muốn xoá ${command.reference}: “${event.label}”. Anh trả lời “đúng” để xác nhận, hoặc “hủy” để giữ lại.`;
+              result = `Anh muốn xoá ${command.reference}: “${event.label}”. Anh bấm nút để xác nhận hoặc giữ lại.`;
+              replyMarkup = confirmationButtons(`progress:${event.id}`);
             }
           }
         } else result = formatProgress(plan, applications, runs);
@@ -256,8 +279,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       }
     } else if (command.kind === 'confirm' || command.kind === 'reject') {
-      const progressChange = await db.prepare("SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1")
-        .bind(job.chat_id).first<ProgressChange>();
+      const progressChange = command.target && !command.target.startsWith('progress:') ? undefined
+        : await db.prepare(`SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending'
+          ${command.target?.startsWith('progress:') ? 'AND event_id=?' : ''} ORDER BY created_at DESC LIMIT 1`)
+          .bind(job.chat_id, ...(command.target?.startsWith('progress:') ? [Number(command.target.slice(9))] : []))
+          .first<ProgressChange>();
       if (progressChange) {
         const event = await db.prepare(`SELECT e.id,e.kind,e.label,e.normalized_label FROM weekly_progress_events e
           JOIN weekly_plans p ON p.week_start=e.week_start WHERE e.id=? AND p.chat_id=? AND p.status='active'`).bind(progressChange.event_id, job.chat_id).first<ProgressEvent>();
@@ -291,8 +317,10 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           }
         }
       } else {
-      const approval = await db.prepare("SELECT id,source_update,title,status FROM approval_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1")
-        .bind(job.chat_id).first<Approval>();
+      const approval = command.target && !command.target.startsWith('task:') ? undefined
+        : await db.prepare(`SELECT id,source_update,title,status FROM approval_requests WHERE chat_id=? AND status='pending'
+          ${command.target?.startsWith('task:') ? 'AND source_update=?' : ''} ORDER BY created_at DESC LIMIT 1`)
+          .bind(job.chat_id, ...(command.target?.startsWith('task:') ? [Number(command.target.slice(5))] : [])).first<Approval>();
       if (!approval) result = 'Hiện không có đề xuất nào đang chờ xác nhận.';
       else if (command.kind === 'reject') {
         statements.push(db.prepare(`UPDATE approval_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now, approval.id, ...args()));
@@ -309,12 +337,13 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     else if (parseNaturalAdd(job.text)) {
       const title = parseNaturalAdd(job.text)!;
       statements.push(db.prepare(`INSERT INTO approval_requests(chat_id,source_update,title,created_at) SELECT ?,?,?,? WHERE ${guard}`).bind(job.chat_id, job.update_id, title, now, ...args()));
-      result = `Em hiểu là anh muốn thêm task: “${title}”.\nAnh trả lời “đúng” để xác nhận, hoặc “hủy” để bỏ qua.`;
+      result = `Em hiểu là anh muốn thêm task: “${title}”.\nAnh bấm nút để xác nhận hoặc bỏ qua.`;
+      replyMarkup = confirmationButtons(`task:${job.update_id}`);
     }
     else if (assistant && await reserveAi(db, now)) result = await assistant(job.text, recent);
     else result = assistant ? 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /help để xem các lệnh chắc chắn.' : 'Em chưa hiểu chắc yêu cầu này.\n' + help;
     // Lease serializes task writers; job result and outbox commit with the task change.
-    statements.push(db.prepare(`INSERT INTO deliveries(job_id,chat_id,text) SELECT ?,?,? WHERE ${guard}`).bind(job.id, job.chat_id, result, ...args()));
+    statements.push(db.prepare(`INSERT INTO deliveries(job_id,chat_id,text,reply_markup) SELECT ?,?,?,? WHERE ${guard}`).bind(job.id, job.chat_id, result, replyMarkup ? JSON.stringify(replyMarkup) : null, ...args()));
     statements.push(db.prepare(`INSERT INTO conversation_messages(chat_id,direction,text,created_at) SELECT ?,'outbound',?,? WHERE ${guard}`).bind(job.chat_id, result, now, ...args()));
     statements.push(db.prepare(`UPDATE jobs SET status=?,result=? WHERE id=? AND ${guard}`)
       .bind(job.attempts >= 3 ? 'failed' : 'done', result, job.id, ...args()));
@@ -340,12 +369,12 @@ export async function deliverNext(db: D1Database, sender: Sender, now = Date.now
     AND status='pending' AND NOT EXISTS(SELECT 1 FROM deliveries WHERE status='sending') AND EXISTS(SELECT 1 FROM owner WHERE chat_id=deliveries.chat_id)`)
     .bind(token, now, now).run();
   if (!claim.meta.changes) return false;
-  const item = await db.prepare('SELECT job_id,chat_id,text,attempts FROM deliveries WHERE claim_token=?').bind(token)
-    .first<{ job_id: number; chat_id: string; text: string; attempts: number }>();
+  const item = await db.prepare('SELECT job_id,chat_id,text,reply_markup,attempts FROM deliveries WHERE claim_token=?').bind(token)
+    .first<{ job_id: number; chat_id: string; text: string; reply_markup: string|null; attempts: number }>();
   if (!item) return false;
   await db.prepare('UPDATE job_metrics SET delivery_started_at=COALESCE(delivery_started_at,?) WHERE job_id=?').bind(now, item.job_id).run();
   let outcome;
-  try { outcome = await sender(item.chat_id, item.text); } catch { outcome = { kind: 'unknown' as const }; }
+  try { outcome = await sender(item.chat_id, item.text, readReplyMarkup(item.reply_markup)); } catch { outcome = { kind: 'unknown' as const }; }
   const status = outcome.kind === 'retry' ? (item.attempts < 3 ? 'pending' : 'failed') : outcome.kind;
   await db.prepare('UPDATE deliveries SET status=?,next_at=?,message_id=? WHERE job_id=? AND claim_token=?')
     .bind(status, outcome.kind === 'retry' ? now + outcome.after * 1000 : 0, outcome.kind === 'sent' ? outcome.messageId : null, item.job_id, token).run();

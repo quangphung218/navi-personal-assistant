@@ -228,3 +228,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 
 - Đã làm: gom quy tắc chống trùng, số lượng, trạng thái hoàn thành và telemetry vào một đường ghi chung cho câu check-in trực tiếp lẫn nút chọn mục mơ hồ.
 - Đã kiểm chứng: một walkthrough D1/Telegram bao phủ chọn mục, ngày chạy bộ cụ thể, sửa check-in sau xác nhận, nút chọn hết hạn và xoá check-in sau xác nhận.
+
+## 2026-09-09 22:10 — Quan sát pilot từ Telegram
+
+- Đã làm: thêm `/status` để đọc dữ liệu vận hành vừa quan sát được: kế hoạch tuần hiện hành, task mở, trạng thái nhắc và check-in gần nhất. Không suy đoán uptime ngoài việc Worker vừa xử lý lệnh.
+- Telemetry: `/insights` tổng hợp check-in ghi thẳng, ghi sau khi chọn, chưa nối được mục và lựa chọn còn chờ trong tuần hiện tại. Lệnh không hiển thị nội dung hội thoại mới.
+- Telegram: hai lệnh mới được thêm vào Menu và `/help`.

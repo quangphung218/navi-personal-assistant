@@ -42,11 +42,28 @@ beforeEach(async()=>{
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
-    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','progress','add','list','done','reminders','help']);
+    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','progress','insights','add','list','done','reminders','status','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
     expect(parseCommand('/progress')).toEqual({kind:'progressList'});
+    expect(parseCommand('/status')).toEqual({kind:'systemStatus'});
+    expect(parseCommand('/insights')).toEqual({kind:'insights'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
+  });
+  it('reports observed runtime state and weekly check-in telemetry',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Public Navi'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db,now);await replies();}
+    await receive(update(8,'Anh đã public Navi')); await processNext(db,now); await replies();
+    await receive(update(9,'Anh đã viết README')); await processNext(db,now); await replies();
+    await receive(update(10,'Anh đã hoàn thành Navi')); await processNext(db,now); await replies();
+    await receive(update(11,'/status')); await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('Tin /status này vừa được Worker xử lý');
+    await receive(update(12,'/insights')); await processNext(db,now);
+    const insight=(await replies()).at(-1);
+    expect(insight).toContain('Ghi thẳng: 1');
+    expect(insight).toContain('Chưa nối được mục: 1');
+    expect(insight).toContain('Đang chờ chọn: 1');
   });
   it('keeps the pilot conversation corpus classified as intended',()=>{
     for (const sample of pilotConversationCorpus) expect(parseCommand(sample.text).kind).toBe(sample.kind);

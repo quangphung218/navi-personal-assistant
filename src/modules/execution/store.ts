@@ -261,6 +261,32 @@ async function todaySummary(db: D1Database, chatId: string, now: number): Promis
   return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}`;
 }
 
+async function systemStatusSummary(db: D1Database, chatId: string, now: number): Promise<string> {
+  const currentWeek = weekStart(now);
+  const [plan, preference, openTasks, latest] = await Promise.all([
+    db.prepare("SELECT goal FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(currentWeek,chatId).first<{goal:string}>(),
+    db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(chatId).first<ReminderPreference>(),
+    db.prepare("SELECT COUNT(*) AS count FROM tasks WHERE status='open'").first<{count:number}>(),
+    db.prepare(`SELECT c.note,c.occurred_at FROM weekly_checkins c JOIN weekly_plans p ON p.week_start=c.week_start
+      WHERE p.chat_id=? AND p.status='active' ORDER BY c.occurred_at DESC,c.id DESC LIMIT 1`).bind(chatId).first<{note:string;occurred_at:number}>(),
+  ]);
+  const reminders = (preference?.weekly_progress_enabled ?? 1) === 1
+    ? `bật lúc ${String(preference?.delivery_hour ?? 20).padStart(2,'0')}:00` : 'đang tắt';
+  return `Trạng thái Navi\n• Tin /status này vừa được Worker xử lý.\n• Kế hoạch tuần: ${plan ? `đang theo dõi “${plan.goal}”` : 'chưa có'}\n• Task mở: ${openTasks?.count ?? 0}\n• Nhắc tiến độ: ${reminders}\n• Check-in gần nhất: ${latest ? `“${latest.note}” (${formatLocalTime(latest.occurred_at)})` : 'chưa có'}`;
+}
+
+async function insightsSummary(db: D1Database, chatId: string, now: number): Promise<string> {
+  const start = Date.parse(`${weekStart(now)}T00:00:00+07:00`), end = start + 7*24*60*60*1000;
+  const [outcomes, pending] = await Promise.all([
+    db.prepare(`SELECT outcome,COUNT(*) AS count FROM checkin_outcomes WHERE chat_id=? AND created_at>=? AND created_at<? GROUP BY outcome`)
+      .bind(chatId,start,end).all<{outcome:'recorded'|'selected'|'ambiguous'|'unmatched';count:number}>(),
+    db.prepare(`SELECT COUNT(*) AS count FROM checkin_selection_requests WHERE chat_id=? AND status='pending' AND expires_at>?`)
+      .bind(chatId,now).first<{count:number}>(),
+  ]);
+  const counts = new Map(outcomes.results.map(row=>[row.outcome,row.count]));
+  return `Tín hiệu check-in tuần này\n• Ghi thẳng: ${counts.get('recorded') ?? 0}\n• Ghi sau khi anh chọn: ${counts.get('selected') ?? 0}\n• Chưa nối được mục: ${counts.get('unmatched') ?? 0}\n• Đang chờ chọn: ${pending?.count ?? 0}\n\nEm dùng các số này để biết câu nào cần bổ sung vào corpus, không lưu thêm nội dung tin nhắn.`;
+}
+
 const AI_RESERVATION_MICROS = 20_000;
 const AI_MONTHLY_CAP_MICROS = 800_000;
 export async function reserveAi(db: D1Database, now = Date.now()): Promise<boolean> {
@@ -528,6 +554,10 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)
         .bind(id, command.title, normalize(command.title), job.update_id, now, ...args()));
       result = `Đã thêm ${id}: ${command.title}\nKhi xong, anh nhắn /done ${id}.`;
+    } else if (command.kind === 'systemStatus') {
+      result = await systemStatusSummary(db,job.chat_id,now);
+    } else if (command.kind === 'insights') {
+      result = await insightsSummary(db,job.chat_id,now);
     } else if (command.kind === 'status') {
       const pendingApproval = await db.prepare("SELECT title FROM approval_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(job.chat_id).first<{title:string}>();
       const pendingTask = await db.prepare("SELECT id,title FROM tasks WHERE status='open' ORDER BY created_at DESC LIMIT 1").bind().first<{id:string;title:string}>();

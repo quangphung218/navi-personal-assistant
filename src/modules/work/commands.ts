@@ -7,6 +7,12 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
   | { kind: 'progress'; activity: 'job_application'; detail: string }
   | { kind: 'progress'; activity: 'run'; date?: { day: number; month: number; year?: number } }
   | { kind: 'progressChange'; action: 'delete'|'rename'; reference: string; detail?: string }
+  | { kind: 'jobApplications' }
+  | { kind: 'jobApplicationAdd'; company: string; role: string; url?: string }
+  | { kind: 'jobApplicationStatus'; reference: string; status: 'applied'|'followed_up'|'responded'|'interview'|'offer'|'rejected' }
+  | { kind: 'jobFollowup'; reference: string; day: number; month: number; year?: number; hour: number; minute: number }
+  | { kind: 'jobFollowupDone'; reference: string }
+  | { kind: 'jobFollowupDefer'; reference: string }
   | { kind: 'reminders'; enabled?: boolean }
   | { kind: 'status' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
@@ -19,6 +25,9 @@ export function parseCommand(text: string): Command {
   const taskAction = value.match(/^_navi:task:(done|defer|clear):(T\d+)$/iu);
   if (taskAction) return taskAction[1] === 'done' ? { kind: 'done', reference: taskAction[2]!.toUpperCase() }
     : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };
+  const jobAction = value.match(/^_navi:job:(followed|defer):(J\d+)$/iu);
+  if (jobAction) return jobAction[1] === 'followed' ? { kind: 'jobFollowupDone', reference: jobAction[2]!.toUpperCase() }
+    : { kind: 'jobFollowupDefer', reference: jobAction[2]!.toUpperCase() };
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
     const title = add[1]!.trim().replace(/\s+/g, ' ');
@@ -40,6 +49,19 @@ export function parseCommand(text: string): Command {
   const carry = value.match(/^\/review(?:@\w+)?\s+carry\s+(T\d+)$/iu);
   if (carry) return { kind: 'review', carry: carry[1]!.toUpperCase() };
   if (/^(?:\/review(?:@\w+)?|review tuần)$/iu.test(value)) return { kind: 'review' };
+  const jobAdd = value.match(/^\/jobs(?:@\w+)?\s+add\s+([^|]+)\|\s*([^|]+?)(?:\|\s*(\S+))?\s*$/iu);
+  if (jobAdd) {
+    const company = jobAdd[1]!.trim().replace(/\s+/g, ' '), role = jobAdd[2]!.trim().replace(/\s+/g, ' '), url = jobAdd[3]?.trim();
+    if (company.length >= 2 && company.length <= 120 && role.length >= 2 && role.length <= 160 && (!url || /^https?:\/\/\S+$/iu.test(url))) return { kind: 'jobApplicationAdd', company, role, url };
+  }
+  const jobStatus = value.match(/^\/jobs(?:@\w+)?\s+status\s+(J\d+)\s+(applied|followed_up|responded|interview|offer|rejected)$/iu);
+  if (jobStatus) return { kind: 'jobApplicationStatus', reference: jobStatus[1]!.toUpperCase(), status: jobStatus[2]!.toLowerCase() as 'applied'|'followed_up'|'responded'|'interview'|'offer'|'rejected' };
+  const jobFollowup = value.match(/^\/jobs(?:@\w+)?\s+followup\s+(J\d+)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+(\d{1,2})(?::(\d{2}))?$/iu);
+  if (jobFollowup) {
+    const day=Number(jobFollowup[2]),month=Number(jobFollowup[3]),year=jobFollowup[4]?Number(jobFollowup[4]):undefined,hour=Number(jobFollowup[5]),minute=Number(jobFollowup[6] ?? 0);
+    if(day>=1&&day<=31&&month>=1&&month<=12&&hour>=0&&hour<=23&&minute>=0&&minute<=59) return {kind:'jobFollowup',reference:jobFollowup[1]!.toUpperCase(),day,month,year,hour,minute};
+  }
+  if (/^\/jobs(?:@\w+)?$/iu.test(value)) return { kind: 'jobApplications' };
   const progressChange = value.match(/^\/progress(?:@\w+)?\s+(delete|xóa|xoá|edit|sửa)\s+(P\d+)(?:\s+(.+))?$/iu);
   if (progressChange) {
     const action = /^(?:delete|xóa|xoá)$/iu.test(progressChange[1]!) ? 'delete' : 'rename';
@@ -76,4 +98,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nKết quả chỉ được ghi theo xác nhận của anh.`;
+export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n\nJob pipeline\n/jobs — xem các job đã apply\n/jobs add Công ty | Vị trí | https://... — thêm job\n/jobs status J1 interview — cập nhật trạng thái\n/jobs followup J1 15/9 10:00 — đặt lại giờ follow-up\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nKết quả chỉ được ghi theo xác nhận của anh.`;

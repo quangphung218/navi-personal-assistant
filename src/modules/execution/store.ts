@@ -10,6 +10,7 @@ type WeeklyPlan = { week_start: string; chat_id: string; goal: string; commitmen
 type ReminderPreference = { weekly_progress_enabled: number; delivery_hour: number };
 type ProgressEvent = { id: number; kind: 'job_application'|'run'; label: string; normalized_label: string };
 type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename'; new_label: string|null };
+type JobApplication = { id: number; company: string; role: string; job_url: string|null; status: 'applied'|'followed_up'|'responded'|'interview'|'offer'|'rejected'; applied_at: number; followup_at: number|null };
 
 function localDate(now: number): string {
   return new Date(now + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -96,6 +97,22 @@ function taskReminderButtons(taskId: string): ReplyMarkup {
   ], [{ text: 'Bỏ nhắc', callback_data: `_navi:task:clear:${taskId}` }]] };
 }
 
+function jobFollowupButtons(jobId: number): ReplyMarkup {
+  return { inline_keyboard: [[
+    { text: 'Đã follow-up', callback_data: `_navi:job:followed:J${jobId}` },
+    { text: 'Dời 2 ngày', callback_data: `_navi:job:defer:J${jobId}` },
+  ]] };
+}
+
+function formatJobApplications(applications: JobApplication[]): string {
+  if (!applications.length) return 'Chưa có job nào trong pipeline.\n\nThêm job: /jobs add Công ty | Vị trí | https://...';
+  const entry = (application: JobApplication) => {
+    const followup = application.status === 'applied' && application.followup_at ? ` · follow-up ${formatLocalTime(application.followup_at)}` : '';
+    return `• J${application.id} · ${application.company} — ${application.role}\n  ${application.status}${followup}`;
+  };
+  return `Job pipeline:\n${applications.slice(0,20).map(entry).join('\n')}\n\nCập nhật: /jobs status J1 interview\nĐặt lại follow-up: /jobs followup J1 15/9 10:00`;
+}
+
 function readReplyMarkup(value: string|null): ReplyMarkup | undefined {
   if (!value) return undefined;
   try {
@@ -175,7 +192,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'jobApplications' && command.kind !== 'jobApplicationAdd' && command.kind !== 'jobApplicationStatus' && command.kind !== 'jobFollowup' && command.kind !== 'jobFollowupDone' && command.kind !== 'jobFollowupDefer' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
@@ -256,6 +273,58 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           ON CONFLICT(chat_id) DO UPDATE SET weekly_progress_enabled=excluded.weekly_progress_enabled,updated_at=excluded.updated_at WHERE ${guard}`)
           .bind(job.chat_id, command.enabled ? 1 : 0, now, ...args()));
         result = command.enabled ? 'Đã bật nhắc tiến độ tuần lúc 20:00 mỗi tối (giờ Việt Nam).' : 'Đã tắt nhắc tiến độ tuần. Khi cần bật lại, anh nhắn /reminders on.';
+      }
+    } else if (command.kind === 'jobApplications' || command.kind === 'jobApplicationAdd' || command.kind === 'jobApplicationStatus' || command.kind === 'jobFollowup' || command.kind === 'jobFollowupDone' || command.kind === 'jobFollowupDefer') {
+      const currentWeek = weekStart(now);
+      const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+        .bind(currentWeek, job.chat_id).first<WeeklyPlan>();
+      if (!plan) result = 'Tuần này chưa có kế hoạch đã xác nhận. Anh nhắn /week để tạo trước khi thêm job nhé.';
+      else if (command.kind === 'jobApplications') {
+        const applications = (await db.prepare(`SELECT id,company,role,job_url,status,applied_at,followup_at FROM job_applications
+          WHERE chat_id=? AND week_start=? ORDER BY CASE status WHEN 'interview' THEN 0 WHEN 'offer' THEN 1 WHEN 'applied' THEN 2 WHEN 'followed_up' THEN 3 ELSE 4 END, applied_at DESC LIMIT 21`)
+          .bind(job.chat_id, currentWeek).all<JobApplication>()).results;
+        result = formatJobApplications(applications);
+      } else if (command.kind === 'jobApplicationAdd') {
+        const existing = await db.prepare('SELECT id FROM job_applications WHERE week_start=? AND normalized_company=? AND normalized_role=?')
+          .bind(currentWeek, normalize(command.company), normalize(command.role)).first<{id:number}>();
+        if (existing) result = `J${existing.id} đã có trong pipeline tuần này nên em không thêm trùng.`;
+        else {
+          const followupAt = now + 5 * 24 * 60 * 60 * 1000;
+          statements.push(db.prepare(`INSERT INTO job_applications(week_start,chat_id,company,normalized_company,role,normalized_role,job_url,applied_at,followup_at,source_update,updated_at)
+            SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek, job.chat_id, command.company, normalize(command.company), command.role, normalize(command.role), command.url ?? null, now, followupAt, job.update_id, now, ...args()));
+          statements.push(db.prepare(`INSERT INTO weekly_progress_events(week_start,kind,label,normalized_label,source_update,occurred_at)
+            SELECT ?, 'job_application', ?, ?, ?, ? WHERE ${guard}`).bind(currentWeek, `${command.company} — ${command.role}`, normalize(`${command.company} — ${command.role}`), job.update_id, now, ...args()));
+          const counts = await db.prepare("SELECT COUNT(*) AS count FROM weekly_progress_events WHERE week_start=? AND kind='job_application'").bind(currentWeek).first<{count:number}>();
+          result = `Đã thêm job vào pipeline: ${command.company} — ${command.role}.\nEm sẽ nhắc follow-up vào ${formatLocalTime(followupAt)} nếu chưa có phản hồi.\n\n${formatProgress(plan, (counts?.count ?? 0) + 1, (await db.prepare("SELECT COUNT(*) AS count FROM weekly_progress_events WHERE week_start=? AND kind='run'").bind(currentWeek).first<{count:number}>())?.count ?? 0)}`;
+        }
+      } else {
+        const id = Number(command.reference.slice(1));
+        const application = await db.prepare('SELECT id,company,role,job_url,status,applied_at,followup_at FROM job_applications WHERE id=? AND chat_id=? AND week_start=?')
+          .bind(id, job.chat_id, currentWeek).first<JobApplication>();
+        if (!application) result = `Em không thấy ${command.reference} trong pipeline tuần này. Anh nhắn /jobs để xem mã.`;
+        else if (command.kind === 'jobApplicationStatus') {
+          const followupAt = command.status === 'applied' ? (application.followup_at && application.followup_at > now ? application.followup_at : now + 5 * 24 * 60 * 60 * 1000) : null;
+          statements.push(db.prepare(`UPDATE job_applications SET status=?,followup_at=?,followup_reminded_at=NULL,updated_at=? WHERE id=? AND ${guard}`)
+            .bind(command.status, followupAt, now, application.id, ...args()));
+          result = `Đã cập nhật J${application.id} thành ${command.status}.`;
+        } else if (command.kind === 'jobFollowup') {
+          const followupAt = scheduledTime(command, now);
+          if (!followupAt || followupAt <= now) result = 'Giờ follow-up cần ở tương lai. Ví dụ: /jobs followup J1 15/9 10:00';
+          else {
+            statements.push(db.prepare(`UPDATE job_applications SET status='applied',followup_at=?,followup_reminded_at=NULL,updated_at=? WHERE id=? AND ${guard}`)
+              .bind(followupAt, now, application.id, ...args()));
+            result = `Đã đặt follow-up cho J${application.id}: ${formatLocalTime(followupAt)}.`;
+          }
+        } else if (command.kind === 'jobFollowupDone') {
+          statements.push(db.prepare(`UPDATE job_applications SET status='followed_up',followup_at=NULL,updated_at=? WHERE id=? AND ${guard}`)
+            .bind(now, application.id, ...args()));
+          result = `Đã ghi nhận follow-up cho J${application.id}. Khi có phản hồi, anh dùng /jobs status J${application.id} responded.`;
+        } else {
+          const followupAt = now + 2 * 24 * 60 * 60 * 1000;
+          statements.push(db.prepare(`UPDATE job_applications SET status='applied',followup_at=?,followup_reminded_at=NULL,updated_at=? WHERE id=? AND ${guard}`)
+            .bind(followupAt, now, application.id, ...args()));
+          result = `Đã dời follow-up J${application.id} sang ${formatLocalTime(followupAt)}.`;
+        }
       }
     } else if (command.kind === 'weekStatus' || command.kind === 'progressList' || command.kind === 'progress' || command.kind === 'progressChange') {
       const currentWeek = weekStart(now);
@@ -531,6 +600,29 @@ export async function enqueueDueTaskReminders(db: D1Database, now = Date.now()):
       db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(JSON.stringify(taskReminderButtons(task.id)), updateId),
       db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
       db.prepare('INSERT OR IGNORE INTO task_reminders(task_id,due_at,job_id,created_at) SELECT ?,?,id,? FROM jobs WHERE update_id=?').bind(task.id, task.due_at, now, updateId),
+    ]);
+    queued ||= (results[0]?.meta.changes ?? 0) === 1;
+  }
+  return queued;
+}
+
+export async function enqueueJobFollowups(db: D1Database, now = Date.now()): Promise<boolean> {
+  const due = (await db.prepare(`SELECT id,company,role,followup_at FROM job_applications
+    WHERE status='applied' AND followup_at IS NOT NULL AND followup_at<=? AND followup_reminded_at IS NULL
+    ORDER BY followup_at,id LIMIT 5`).bind(now).all<JobApplication>()).results;
+  let queued = false;
+  for (const application of due) {
+    const updateId = -(5_000_000_000_000 + Math.floor(application.followup_at! / 60_000) * 1_000 + application.id);
+    const text = `Đến lúc follow-up J${application.id}: ${application.company} — ${application.role}.\n\nAnh đã liên hệ lại chưa?`;
+    const results = await db.batch([
+      db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)
+        SELECT ?,owner.user_id,application.chat_id,?,?, 'done', ? FROM job_applications application JOIN owner ON owner.chat_id=application.chat_id
+        WHERE application.id=? AND application.status='applied' AND application.followup_reminded_at IS NULL`)
+        .bind(updateId, text, now, text, application.id),
+      db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(JSON.stringify(jobFollowupButtons(application.id)), updateId),
+      db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
+      db.prepare('UPDATE job_applications SET followup_reminded_at=?,updated_at=? WHERE id=? AND status=\'applied\' AND followup_reminded_at IS NULL')
+        .bind(now, now, application.id),
     ]);
     queued ||= (results[0]?.meta.changes ?? 0) === 1;
   }

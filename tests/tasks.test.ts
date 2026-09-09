@@ -10,8 +10,9 @@ import remindersMigration from '../migrations/0007_reminders_and_metrics.sql?raw
 import correctionsMigration from '../migrations/0008_progress_corrections.sql?raw';
 import inlineActionsMigration from '../migrations/0009_inline_actions.sql?raw';
 import dailyLoopMigration from '../migrations/0010_daily_execution_loop.sql?raw';
+import jobPipelineMigration from '../migrations/0011_job_application_pipeline.sql?raw';
 import ingress from '../src/entrypoints/ingress';
-import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
+import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueJobFollowups, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
@@ -31,16 +32,17 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['job_applications','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...jobPipelineMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
-    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','progress','add','list','done','reminders','help']);
+    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','jobs','progress','add','list','done','reminders','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
     expect(parseCommand('/progress')).toEqual({kind:'progressList'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
+    expect(parseCommand('/jobs add ASIM | Senior Mobile | https://example.com/mobile')).toEqual({kind:'jobApplicationAdd',company:'ASIM',role:'Senior Mobile',url:'https://example.com/mobile'});
   });
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
     await link(); await receive(update(2,'thêm task viết proposal')); await processNext(db); await replies();
@@ -77,6 +79,29 @@ describe('task conversation on real D1 bindings',()=>{
     const status=(await replies()).at(-1);
     expect(status).toContain('Apply: 1/5');
     expect(status).toContain('Chạy bộ: 1/3');
+  });
+  it('tracks a job application, updates its status, and queues one follow-up reminder',async()=>{
+    const now=Date.now(), local=new Date(now+7*60*60*1000), day=local.getUTCDay();
+    local.setUTCDate(local.getUTCDate()-(day===0?6:day-1));
+    const currentWeek=local.toISOString().slice(0,10);
+    await accept(db,update(1,'/start secret'),true,now);await processNext(db,now);await replies();
+    await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at)
+      VALUES(?,'123','Ship Navi','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách',?)`).bind(currentWeek,now).run();
+    await receive(update(2,'/jobs add ASIM | Senior Mobile | https://example.com/mobile')); await processNext(db,now);
+    expect(await db.prepare('SELECT company,role,job_url,status FROM job_applications').first()).toMatchObject({company:'ASIM',role:'Senior Mobile',job_url:'https://example.com/mobile',status:'applied'});
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM weekly_progress_events WHERE kind='job_application'").first()).toMatchObject({count:1});
+    expect((await replies()).at(-1)).toContain('Đã thêm job vào pipeline');
+    await receive(update(3,'/jobs status J1 interview')); await processNext(db,now);
+    expect(await db.prepare('SELECT status,followup_at FROM job_applications WHERE id=1').first()).toMatchObject({status:'interview',followup_at:null});
+    await replies();
+    await db.prepare("UPDATE job_applications SET status='applied',followup_at=?,followup_reminded_at=NULL WHERE id=1").bind(now).run();
+    expect(await enqueueJobFollowups(db,now+1_000)).toBe(true);
+    expect(await enqueueJobFollowups(db,now+2_000)).toBe(false);
+    let markup: unknown;
+    await deliverNext(db,async (_chat,_text,buttons)=>{markup=buttons;return {kind:'sent',messageId:1};},now+1_000);
+    expect(markup).toEqual({inline_keyboard:[[{text:'Đã follow-up',callback_data:'_navi:job:followed:J1'},{text:'Dời 2 ngày',callback_data:'_navi:job:defer:J1'}]]});
+    await receive(update(4,'_navi:job:followed:J1')); await processNext(db,now+2_000);
+    expect(await db.prepare('SELECT status,followup_at FROM job_applications WHERE id=1').first()).toMatchObject({status:'followed_up',followup_at:null});
   });
   it('records an explicitly dated run without calling AI',async()=>{
     const now=Date.now();

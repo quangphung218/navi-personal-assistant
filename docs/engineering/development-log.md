@@ -160,3 +160,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Nhịp pilot: briefing lúc 08:00; reminder tiến độ 20:00 giữ nguyên; review tuần tự gửi Chủ nhật 19:00, liệt kê task mở và hỗ trợ `/review carry T...` để đánh dấu task cho tuần kế tiếp.
 - Độ bền: bảng occurrence riêng chống gửi lặp cho briefing, task reminder và weekly review; mọi thông báo tiếp tục dùng job/outbox hiện có.
 - Đã kiểm chứng: test D1/Workers bao phủ dashboard, one-time task reminder cùng markup, briefing một lần/ngày và review một lần/tuần.
+
+## 2026-09-09 18:00 — Job Application Pipeline
+
+- Đã làm: thêm `/jobs` để lưu công ty, vị trí và URL JD; mỗi job có mã `J...`, trạng thái `applied`, `followed_up`, `responded`, `interview`, `offer` hoặc `rejected`.
+- Nhịp follow-up: job mới mặc định được nhắc sau 5 ngày nếu vẫn ở `applied`. Reminder có nút `Đã follow-up` và `Dời 2 ngày`; occurrence được đánh dấu ngay khi xếp hàng để Cron không gửi trùng.
+- Tiến độ: một job thêm bằng pipeline đồng thời ghi đúng một lượt apply vào chỉ tiêu tuần. Câu báo apply tự do hiện có vẫn giữ hành vi cũ để không làm thay đổi lịch sử.
+- Telegram: thêm `/jobs` vào menu native và `/help` gồm cú pháp thêm job, cập nhật trạng thái và đặt lại follow-up.

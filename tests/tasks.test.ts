@@ -5,6 +5,7 @@ import migration from '../migrations/0001_tasks.sql?raw';
 import approvalsMigration from '../migrations/0003_approvals.sql?raw';
 import weeklyMigration from '../migrations/0004_weekly_plans.sql?raw';
 import contextMigration from '../migrations/0005_conversation_context.sql?raw';
+import progressMigration from '../migrations/0006_weekly_progress.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -25,8 +26,8 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
@@ -49,6 +50,21 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare('SELECT * FROM weekly_plans').first()).toBeNull();
     await receive(update(7,'đúng')); await processNext(db);
     expect(await db.prepare('SELECT goal,commitment,habit1,habit2 FROM weekly_plans').first()).toMatchObject({goal:'Ship Navi MVP',commitment:'Apply 5 jobs',habit1:'Chạy bộ 3 buổi',habit2:'Đọc sách 2 buổi'});
+  });
+  it('records weekly applications and one run per local day without duplicates',async()=>{
+    await link();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db);}
+    await receive(update(8,'Anh vừa apply job Backend Developer')); await processNext(db);
+    await receive(update(9,'Anh đã apply job Backend Developer')); await processNext(db);
+    await receive(update(10,'Hôm nay anh đã chạy bộ')); await processNext(db);
+    await receive(update(11,'Hôm nay anh đã chạy bộ')); await processNext(db);
+    await receive(update(12,'/week status')); await processNext(db);
+    const events=await db.prepare('SELECT kind,label,source FROM weekly_progress_events ORDER BY id').all<{kind:string;label:string;source:string}>();
+    expect(events.results).toHaveLength(2);
+    expect(events.results).toMatchObject([{kind:'job_application',label:'Backend Developer',source:'user_reported'},{kind:'run',source:'user_reported'}]);
+    const status=(await replies()).at(-1);
+    expect(status).toContain('Apply: 1/5');
+    expect(status).toContain('Chạy bộ: 1/3');
   });
   it('proposes a natural task and only creates it after confirmation',async()=>{
     await link(); await receive(update(2,'À chắc anh phải thêm task apply 5 job trong tuần này')); await processNext(db);

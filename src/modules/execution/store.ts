@@ -6,6 +6,31 @@ type Job = { id: number; update_id: number; chat_id: string; text: string; attem
 type Task = { id: string; title: string; status: 'open' | 'done'; revision: number };
 type Approval = { id: number; source_update: number; title: string; status: 'pending' };
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
+type WeeklyPlan = { week_start: string; goal: string; commitment: string; habit1: string; habit2: string };
+
+function localDate(now: number): string {
+  return new Date(now + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
+}
+
+function weekStart(now: number): string {
+  const local = new Date(now + 7 * 60 * 60 * 1000);
+  const day = local.getUTCDay();
+  local.setUTCDate(local.getUTCDate() - (day === 0 ? 6 : day - 1));
+  return local.toISOString().slice(0, 10);
+}
+
+function targetFrom(text: string): number | undefined {
+  const value = Number(text.match(/\b(\d{1,3})\b/u)?.[1]);
+  return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function formatProgress(plan: WeeklyPlan, applications: number, runs: number): string {
+  const applicationTarget = targetFrom(plan.commitment);
+  const runHabit = [plan.habit1, plan.habit2].find(value => /chạy|run/iu.test(value));
+  const runTarget = runHabit ? targetFrom(runHabit) : undefined;
+  const ratio = (count: number, target?: number) => target ? `${count}/${target}` : `${count} lần đã ghi`;
+  return `Tiến độ tuần bắt đầu ${plan.week_start}:\n• Mục tiêu: ${plan.goal}\n• Cam kết: ${plan.commitment}\n• Apply: ${ratio(applications, applicationTarget)}\n• Chạy bộ: ${ratio(runs, runTarget)}\n\nCác kết quả được ghi theo xác nhận của anh.`;
+}
 export async function ownerFor(db: D1Database) {
   return db.prepare('SELECT user_id,chat_id FROM owner WHERE id=1').first<{ user_id: string; chat_id: string }>();
 }
@@ -58,7 +83,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'week' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm') {
@@ -85,10 +110,36 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         result = `Em tóm tắt kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${value}\n\nAnh trả lời “đúng” để lưu, hoặc “hủy” để bỏ.`;
       }
     } else if (command.kind === 'week') {
-      const weekStart = new Date(now); weekStart.setUTCHours(0,0,0,0); const day = weekStart.getUTCDay(); weekStart.setUTCDate(weekStart.getUTCDate() - (day === 0 ? 6 : day - 1));
-      const date = weekStart.toISOString().slice(0,10);
+      const date = weekStart(now);
       statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,week_start,created_at) SELECT 1,?,'goal',?,? WHERE ${guard}`).bind(job.chat_id, date, now, ...args()));
       result = 'Mình lập kế hoạch tuần này nhé. Mục tiêu công việc quan trọng nhất của anh là gì?';
+    } else if (command.kind === 'weekStatus' || command.kind === 'progress') {
+      const currentWeek = weekStart(now);
+      const plan = await db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+        .bind(currentWeek, job.chat_id).first<WeeklyPlan>();
+      if (!plan) result = 'Tuần này chưa có kế hoạch đã xác nhận. Anh nhắn /week để tạo nhé.';
+      else {
+        const counts = await db.prepare(`SELECT
+          SUM(CASE WHEN kind='job_application' THEN 1 ELSE 0 END) AS applications,
+          SUM(CASE WHEN kind='run' THEN 1 ELSE 0 END) AS runs
+          FROM weekly_progress_events WHERE week_start=?`).bind(currentWeek).first<{applications:number|null;runs:number|null}>();
+        let applications = counts?.applications ?? 0, runs = counts?.runs ?? 0;
+        if (command.kind === 'progress') {
+          const label = command.activity === 'job_application' ? command.detail : localDate(now);
+          const normalized = normalize(label);
+          const existing = await db.prepare('SELECT id FROM weekly_progress_events WHERE week_start=? AND kind=? AND normalized_label=?')
+            .bind(currentWeek, command.activity, normalized).first<{id:number}>();
+          if (existing) result = command.activity === 'job_application'
+            ? `Vị trí “${label}” đã được ghi trong tuần này nên em không cộng lại.\n\n${formatProgress(plan, applications, runs)}`
+            : `Buổi chạy ngày ${label} đã được ghi rồi nên em không cộng lại.\n\n${formatProgress(plan, applications, runs)}`;
+          else {
+            statements.push(db.prepare(`INSERT INTO weekly_progress_events(week_start,kind,label,normalized_label,source_update,occurred_at)
+              SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek, command.activity, label, normalized, job.update_id, now, ...args()));
+            if (command.activity === 'job_application') applications += 1; else runs += 1;
+            result = `${command.activity === 'job_application' ? `Đã ghi nhận anh apply: ${label}.` : `Đã ghi nhận buổi chạy ngày ${label}.`}\n\n${formatProgress(plan, applications, runs)}`;
+          }
+        } else result = formatProgress(plan, applications, runs);
+      }
     } else if (command.kind === 'add') {
       const id = `T${job.update_id}`;
       statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)

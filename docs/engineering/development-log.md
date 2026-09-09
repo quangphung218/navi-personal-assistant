@@ -107,3 +107,12 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: tạo `assets/brand/navi-hidden-path-transparent.png` từ logo hiện tại bằng công cụ sửa ảnh; cập nhật README. Giữ bản nền tối làm tham chiếu.
 - Kiểm chứng: đã xem ảnh xuất, kiểm tra PNG 1254 × 1254 có alpha với giá trị từ 0 đến 255.
 - Giới hạn: bản raster tái dựng, chưa có SVG vector.
+
+## 2026-09-09 14:50 — Weekly Progress v1
+
+- Bối cảnh: kế hoạch tuần đã lưu được nhưng chưa phản ánh số lần ứng tuyển và chạy bộ đã hoàn thành.
+- Đã làm: thêm `weekly_progress_events` trong `migrations/0006_weekly_progress.sql`; nhận câu báo apply/chạy bộ và `/week status`; tính mục tiêu số từ cam kết/thói quen tuần.
+- Quyết định: mọi kết quả mang nguồn `user_reported`; vị trí ứng tuyển trùng trong cùng tuần không cộng lại; chạy bộ tối đa một occurrence mỗi ngày theo `Asia/Ho_Chi_Minh`.
+- Đã kiểm chứng: 22 test workerd/D1 và TypeScript qua; test bao phủ hai kiểu trùng và báo `1/5`, `1/3`.
+- Chưa làm / giới hạn: chưa có URL/công ty riêng cho hồ sơ ứng tuyển, chưa sửa/xóa occurrence và chưa nhắc chủ động.
+- Bước tiếp theo: chạy pilot với dữ liệu thật, sau đó thêm lệnh sửa occurrence trước khi bật nhắc lịch.

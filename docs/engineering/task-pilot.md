@@ -7,6 +7,7 @@
 - Ghép một tài khoản Telegram cá nhân bằng mã ngẫu nhiên 256 bit, hạn 24 giờ. Mã không được lưu vào jobs. Sau khi ghép, chỉ đúng user và private chat đã đăng ký được ghi dữ liệu; mã không thể thay chủ tài khoản.
 - `/add Viết README`, `/list`, `/list all`, `/done T123`, `/help`. Hỗ trợ thêm một số câu tiếng Việt như “Thêm việc …”, “Anh còn việc gì?”, “Xong T123”. Tên trùng cần dùng mã việc.
 - Hoàn thành mang nguồn `user_reported`: ghi nhận xác nhận của chủ tài khoản, không tuyên bố bot đã tự thực hiện công việc.
+- `/week` tạo kế hoạch tuần có xác nhận. `/week status` xem tiến độ; câu “Anh vừa apply job Backend Developer” và “Hôm nay anh đã chạy bộ” ghi sự kiện nguồn `user_reported`. Một vị trí chuẩn hóa chỉ được tính một lần mỗi tuần; chạy bộ được tính tối đa một buổi mỗi ngày theo `Asia/Ho_Chi_Minh`.
 - Ingress lưu job vào D1 trước khi trả HTTP 200. Queue chỉ đánh thức bộ xử lý; Cron mỗi 5 phút khôi phục các job chưa được phát đi. Khóa có hạn và token bảo vệ các lần ghi; task, kết quả job và outbox cùng một transaction.
 - Tin Telegram trùng `update_id` không tạo việc trùng. Hai tin riêng cùng tên vẫn là hai việc.
 - Gửi phản hồi gặp 429 được thử lại có giới hạn; timeout/5xx hoặc trạng thái gửi không rõ được giữ `unknown`, không gửi lại mù. Có thể dùng `/list` để đọc trạng thái đã lưu.
@@ -37,6 +38,6 @@ Triển khai lại code: chạy `npm run check`, kiểm tra đúng account, áp 
 
 Trước migration có dữ liệu, export D1 vào thư mục `backups/` được ignore và kiểm chứng khôi phục ở database cô lập. Code rollback không hoàn tác schema/data. Chưa thực hiện diễn tập restore hay kiểm chứng 24/7 dài ngày.
 
-Đã có adapter DeepSeek V4 Flash qua OpenRouter cho tin nhắn không khớp lệnh chắc chắn. Adapter gửi tối đa 4.000 ký tự đầu vào và 400 token đầu ra; D1 giữ khoản dự phòng 0,02 USD cho mỗi lượt, với trần 0,80 USD theo tháng UTC. Lỗi OpenRouter được retry theo job, còn trạng thái Telegram vẫn không gửi lại mù. Chưa gọi AI thật trong test và chưa có bộ nhớ hội thoại AI. Chưa có kế hoạch tuần, lịch nhắc, thói quen chạy bộ, theo dõi 5 hồ sơ ứng tuyển, web admin, pagination đầy đủ và GitHub integration/publication. Danh sách hiển thị tối đa 20 việc mỗi lần. Cron hiện chỉ khôi phục job, chưa gửi nhắc chủ động.
+Đã có adapter DeepSeek V4 Flash qua OpenRouter cho tin nhắn không khớp lệnh chắc chắn. Adapter gửi tối đa 4.000 ký tự đầu vào và 400 token đầu ra; D1 giữ khoản dự phòng 0,02 USD cho mỗi lượt, với trần 0,80 USD theo tháng UTC. Lỗi OpenRouter được retry theo job, còn trạng thái Telegram vẫn không gửi lại mù. Chưa gọi AI thật trong test và chưa có bộ nhớ dài hạn. Kế hoạch tuần và tiến độ apply/chạy bộ đã có; chưa có lịch nhắc, web admin, pagination đầy đủ hoặc GitHub integration. Danh sách hiển thị tối đa 20 việc mỗi lần. Cron hiện chỉ khôi phục job, chưa gửi nhắc chủ động.
 
 Bước tiếp theo sau khi thử lệnh: tích hợp OpenRouter với budget guard và command schema kiểm chứng; sau đó mới thêm lịch và điều phối mục tiêu/cam kết/thói quen. Không nâng paid plan hoặc tự nạp tiền.

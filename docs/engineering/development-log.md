@@ -152,3 +152,11 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - An toàn: callback mang mã của đối tượng đang chờ (`weekly`, `task`, `progress`), được kiểm tra với owner chat và trạng thái pending. Nút cũ không thể xác nhận nhầm một yêu cầu khác.
 - Độ bền: reply markup được lưu cùng outbox delivery, nên retry Telegram vẫn gửi đúng nút. Callback query được trả lời ngay để Telegram bỏ trạng thái loading.
 - Đã kiểm chứng: test sử dụng callback scoped để duyệt một task và kiểm tra markup được giao cùng tin nhắn.
+
+## 2026-09-09 17:45 — Daily Execution Loop
+
+- Đã làm: `/today` tổng hợp kế hoạch, tiến độ và task trong ngày; `/schedule T... dd/mm HH:mm` đặt một reminder cho task.
+- Nhắc task: đến giờ, Telegram hiện `Đã làm`, `Dời 1 ngày` và `Bỏ nhắc`. Dời lịch giữ task mở; bỏ nhắc không xoá task.
+- Nhịp pilot: briefing lúc 08:00; reminder tiến độ 20:00 giữ nguyên; review tuần tự gửi Chủ nhật 19:00, liệt kê task mở và hỗ trợ `/review carry T...` để đánh dấu task cho tuần kế tiếp.
+- Độ bền: bảng occurrence riêng chống gửi lặp cho briefing, task reminder và weekly review; mọi thông báo tiếp tục dùng job/outbox hiện có.
+- Đã kiểm chứng: test D1/Workers bao phủ dashboard, one-time task reminder cùng markup, briefing một lần/ngày và review một lần/tuần.

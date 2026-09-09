@@ -1,6 +1,6 @@
 import { telegramSender } from '../adapters/telegram';
 import { openRouterAssistant } from '../adapters/openrouter';
-import { processNext, deliverNext, enqueueWeeklyProgressReminder, hasPending } from '../modules/execution/store';
+import { processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, hasPending } from '../modules/execution/store';
 
 export default {
   async queue(batch, env) {
@@ -17,7 +17,10 @@ export default {
     }
   },
   async scheduled(_event, env) {
-    const reminderQueued = await enqueueWeeklyProgressReminder(env.DB);
-    if (reminderQueued || await hasPending(env.DB)) await env.JOBS_QUEUE.send({wake:true}, {delaySeconds:reminderQueued ? 0 : 5});
+    const [briefingQueued, taskQueued, reminderQueued, reviewQueued] = await Promise.all([
+      enqueueDailyBriefing(env.DB), enqueueDueTaskReminders(env.DB), enqueueWeeklyProgressReminder(env.DB), enqueueWeeklyReview(env.DB),
+    ]);
+    const queued = briefingQueued || taskQueued || reminderQueued || reviewQueued;
+    if (queued || await hasPending(env.DB)) await env.JOBS_QUEUE.send({wake:true}, {delaySeconds:queued ? 0 : 5});
   },
 } satisfies ExportedHandler<CloudflareBindings>;

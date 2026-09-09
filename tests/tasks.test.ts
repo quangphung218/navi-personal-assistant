@@ -9,8 +9,9 @@ import progressMigration from '../migrations/0006_weekly_progress.sql?raw';
 import remindersMigration from '../migrations/0007_reminders_and_metrics.sql?raw';
 import correctionsMigration from '../migrations/0008_progress_corrections.sql?raw';
 import inlineActionsMigration from '../migrations/0009_inline_actions.sql?raw';
+import dailyLoopMigration from '../migrations/0010_daily_execution_loop.sql?raw';
 import ingress from '../src/entrypoints/ingress';
-import { accept, processNext, deliverNext, enqueueWeeklyProgressReminder, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
+import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
@@ -30,15 +31,16 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
-    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','progress','add','list','done','reminders','help']);
+    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','progress','add','list','done','reminders','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
     expect(parseCommand('/progress')).toEqual({kind:'progressList'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
+    expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
   });
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
     await link(); await receive(update(2,'thêm task viết proposal')); await processNext(db); await replies();
@@ -119,6 +121,26 @@ describe('task conversation on real D1 bindings',()=>{
     expect(sent[0]).toContain('Chạy bộ 0/3');
     expect(await db.prepare("SELECT delivery_started_at,delivery_finished_at,delivery_status FROM job_metrics WHERE job_id=(SELECT job_id FROM weekly_reminders)").first())
       .toMatchObject({delivery_status:'sent'});
+  });
+  it('builds a daily dashboard and sends each scheduled task reminder once',async()=>{
+    await link();await replies();await receive(update(2,'/add Viết README'));await processNext(db);await replies();
+    const due=Date.now();await db.prepare('UPDATE tasks SET due_at=? WHERE id=?').bind(due,'T2').run();
+    await receive(update(3,'/today'));await processNext(db);
+    expect((await replies()).at(-1)).toContain('T2: Viết README');
+    expect(await enqueueDueTaskReminders(db,due+1_000)).toBe(true);
+    expect(await enqueueDueTaskReminders(db,due+2_000)).toBe(false);
+    let markup: unknown;
+    await deliverNext(db,async (_chat,_text,buttons)=>{markup=buttons;return {kind:'sent',messageId:1};});
+    expect(markup).toEqual({inline_keyboard:[[{text:'Đã làm',callback_data:'_navi:task:done:T2'},{text:'Dời 1 ngày',callback_data:'_navi:task:defer:T2'}],[{text:'Bỏ nhắc',callback_data:'_navi:task:clear:T2'}]]});
+  });
+  it('queues one daily briefing and one Sunday review',async()=>{
+    const morning=Date.UTC(2026,8,10,1), sunday=Date.UTC(2026,8,13,12);
+    await accept(db,update(1,'/start secret'),true,morning);await processNext(db,morning);await replies();
+    expect(await enqueueDailyBriefing(db,morning)).toBe(true);
+    expect(await enqueueDailyBriefing(db,morning+60_000)).toBe(false);
+    await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at) VALUES('2026-09-07','123','Ship Navi','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách',?)`).bind(sunday).run();
+    expect(await enqueueWeeklyReview(db,sunday)).toBe(true);
+    expect(await enqueueWeeklyReview(db,sunday+60_000)).toBe(false);
   });
   it('lets the owner turn weekly reminders off and back on',async()=>{
     await link();await replies();

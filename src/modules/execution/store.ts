@@ -3,7 +3,7 @@ import type { ReplyMarkup, TelegramUpdate, Sender } from '../../adapters/telegra
 import type { Assistant } from '../../adapters/openrouter';
 
 type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number };
-type Task = { id: string; title: string; status: 'open' | 'done'; revision: number };
+type Task = { id: string; title: string; status: 'open' | 'done'; revision: number; due_at: number|null };
 type Approval = { id: number; source_update: number; title: string; status: 'pending' };
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
 type WeeklyPlan = { week_start: string; chat_id: string; goal: string; commitment: string; habit1: string; habit2: string };
@@ -40,6 +40,23 @@ function localHour(now: number): number {
   return new Date(now + 7 * 60 * 60 * 1000).getUTCHours();
 }
 
+function localDay(now: number): number {
+  return new Date(now + 7 * 60 * 60 * 1000).getUTCDay();
+}
+
+function scheduledTime(command: { day: number; month: number; year?: number; hour: number; minute: number }, now: number): number | undefined {
+  const year = command.year ?? new Date(now + 7 * 60 * 60 * 1000).getUTCFullYear();
+  const value = new Date(Date.UTC(year, command.month - 1, command.day, command.hour - 7, command.minute));
+  const local = new Date(value.getTime() + 7 * 60 * 60 * 1000);
+  if (local.getUTCFullYear() !== year || local.getUTCMonth() !== command.month - 1 || local.getUTCDate() !== command.day || local.getUTCHours() !== command.hour || local.getUTCMinutes() !== command.minute) return undefined;
+  return value.getTime();
+}
+
+function formatLocalTime(timestamp: number): string {
+  const local = new Date(timestamp + 7 * 60 * 60 * 1000);
+  return `${String(local.getUTCDate()).padStart(2,'0')}/${String(local.getUTCMonth()+1).padStart(2,'0')} ${String(local.getUTCHours()).padStart(2,'0')}:${String(local.getUTCMinutes()).padStart(2,'0')}`;
+}
+
 function targetFrom(text: string): number | undefined {
   const value = Number(text.match(/\b(\d{1,3})\b/u)?.[1]);
   return Number.isInteger(value) && value > 0 ? value : undefined;
@@ -71,6 +88,13 @@ function confirmationButtons(target: string): ReplyMarkup {
 }
 
 const progressButton: ReplyMarkup = { inline_keyboard: [[{ text: 'Xem tiến độ', callback_data: '_navi:show:progress' }]] };
+
+function taskReminderButtons(taskId: string): ReplyMarkup {
+  return { inline_keyboard: [[
+    { text: 'Đã làm', callback_data: `_navi:task:done:${taskId}` },
+    { text: 'Dời 1 ngày', callback_data: `_navi:task:defer:${taskId}` },
+  ], [{ text: 'Bỏ nhắc', callback_data: `_navi:task:clear:${taskId}` }]] };
+}
 
 function readReplyMarkup(value: string|null): ReplyMarkup | undefined {
   if (!value) return undefined;
@@ -105,6 +129,22 @@ export async function tasks(db: D1Database, includeDone = false): Promise<Task[]
   return result.results;
 }
 
+async function todaySummary(db: D1Database, chatId: string, now: number): Promise<string> {
+  const date = localDate(now), start = Date.parse(`${date}T00:00:00+07:00`), end = start + 24 * 60 * 60 * 1000;
+  const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+    .bind(weekStart(now), chatId).first<WeeklyPlan>();
+  const due = (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE status='open' AND due_at>=? AND due_at<? ORDER BY due_at,id LIMIT 6")
+    .bind(start,end).all<Task>()).results;
+  const unscheduled = due.length < 6 ? (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE status='open' AND due_at IS NULL ORDER BY created_at,id LIMIT ?")
+    .bind(6-due.length).all<Task>()).results : [];
+  const taskLines = [...due,...unscheduled].map(task => `• ${task.id}: ${task.title}${task.due_at ? ` — ${formatLocalTime(task.due_at)}` : ''}`);
+  if (!plan) return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}\n\nAnh nhắn /week để lập kế hoạch tuần.`;
+  const counts = await db.prepare(`SELECT SUM(CASE WHEN kind='job_application' THEN 1 ELSE 0 END) AS applications,
+    SUM(CASE WHEN kind='run' THEN 1 ELSE 0 END) AS runs FROM weekly_progress_events WHERE week_start=?`).bind(plan.week_start)
+    .first<{applications:number|null;runs:number|null}>();
+  return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${formatProgress(plan, counts?.applications ?? 0, counts?.runs ?? 0)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}`;
+}
+
 const AI_RESERVATION_MICROS = 20_000;
 const AI_MONTHLY_CAP_MICROS = 800_000;
 export async function reserveAi(db: D1Database, now = Date.now()): Promise<boolean> {
@@ -135,7 +175,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'reminders' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
@@ -166,6 +206,45 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       const date = weekStart(now);
       statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,week_start,created_at) SELECT 1,?,'goal',?,? WHERE ${guard}`).bind(job.chat_id, date, now, ...args()));
       result = 'Mình lập kế hoạch tuần này nhé. Mục tiêu công việc quan trọng nhất của anh là gì?';
+    } else if (command.kind === 'today') {
+      result = await todaySummary(db, job.chat_id, now);
+    } else if (command.kind === 'schedule') {
+      const dueAt = scheduledTime(command, now);
+      const task = await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE id=? AND status='open'").bind(command.reference).first<Task>();
+      if (!task) result = 'Em không thấy task đang mở này. Anh dùng /list để xem mã task nhé.';
+      else if (!dueAt || dueAt <= now) result = 'Thời điểm nhắc cần ở tương lai. Ví dụ: /schedule T12 10/9 09:00';
+      else {
+        statements.push(db.prepare(`UPDATE tasks SET due_at=? WHERE id=? AND status='open' AND ${guard}`).bind(dueAt, task.id, ...args()));
+        result = `Đã đặt nhắc ${task.id}: ${task.title}\n${formatLocalTime(dueAt)} (giờ Việt Nam).`;
+      }
+    } else if (command.kind === 'defer' || command.kind === 'clearSchedule') {
+      const task = await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE id=? AND status='open'").bind(command.reference).first<Task>();
+      if (!task) result = 'Task này không còn mở.';
+      else if (command.kind === 'clearSchedule') {
+        statements.push(db.prepare(`UPDATE tasks SET due_at=NULL WHERE id=? AND status='open' AND ${guard}`).bind(task.id, ...args()));
+        result = `Đã bỏ nhắc cho ${task.id}. Task vẫn còn trong danh sách mở.`;
+      } else {
+        const next = (task.due_at && task.due_at > now ? task.due_at : now) + 24 * 60 * 60 * 1000;
+        statements.push(db.prepare(`UPDATE tasks SET due_at=? WHERE id=? AND status='open' AND ${guard}`).bind(next, task.id, ...args()));
+        result = `Đã dời ${task.id} sang ${formatLocalTime(next)}.`;
+      }
+    } else if (command.kind === 'review') {
+      const currentWeek = weekStart(now);
+      if (command.carry) {
+        const task = await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE id=? AND status='open'").bind(command.carry).first<Task>();
+        if (!task) result = 'Task này không còn mở nên không cần chuyển tuần.';
+        else {
+          const next = weekEnd(currentWeek);
+          const nextMonday = new Date(`${next}T00:00:00Z`); nextMonday.setUTCDate(nextMonday.getUTCDate()+1);
+          const nextWeek = nextMonday.toISOString().slice(0,10);
+          statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_task_carryovers(week_start,task_id,decided_at) SELECT ?,?,? WHERE ${guard}`).bind(nextWeek, task.id, now, ...args()));
+          result = `Đã đánh dấu ${task.id} cho tuần bắt đầu ${nextWeek}. Task vẫn giữ nguyên, không bị nhân đôi.`;
+        }
+      } else {
+        const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(currentWeek, job.chat_id).first<WeeklyPlan>();
+        const open = await tasks(db);
+        result = `${plan ? `${formatProgress(plan, (await db.prepare("SELECT COUNT(*) AS count FROM weekly_progress_events WHERE week_start=? AND kind='job_application'").bind(currentWeek).first<{count:number}>())?.count ?? 0, (await db.prepare("SELECT COUNT(*) AS count FROM weekly_progress_events WHERE week_start=? AND kind='run'").bind(currentWeek).first<{count:number}>())?.count ?? 0)}\n\n` : ''}Review tuần:\n${open.length ? `Task đang mở:\n${open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n')}\n\nChuyển một task: /review carry T...` : 'Không còn task mở.'}`;
+      }
     } else if (command.kind === 'reminders') {
       const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(job.chat_id).first<ReminderPreference>();
       if (command.enabled === undefined) {
@@ -413,9 +492,69 @@ export async function enqueueWeeklyProgressReminder(db: D1Database, now = Date.n
       SELECT ?,owner.user_id,owner.chat_id,?,?, 'done', ? FROM owner
       WHERE NOT EXISTS(SELECT 1 FROM weekly_reminders WHERE week_start=? AND local_date=?)`)
       .bind(updateId, text, now, text, currentWeek, date),
-    db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text) SELECT id,chat_id,result FROM jobs WHERE update_id=?').bind(updateId),
+    db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(JSON.stringify(progressButton), updateId),
     db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
     db.prepare('INSERT OR IGNORE INTO weekly_reminders(week_start,local_date,job_id,created_at) SELECT ?,?,id,? FROM jobs WHERE update_id=?').bind(currentWeek, date, now, updateId),
+  ]);
+  return (results[0]?.meta.changes ?? 0) === 1;
+}
+
+export async function enqueueDailyBriefing(db: D1Database, now = Date.now()): Promise<boolean> {
+  if (localHour(now) !== 8) return false;
+  const owner = await ownerFor(db); if (!owner) return false;
+  const date = localDate(now), updateId = -(3_000_000_000 + Number(date.replaceAll('-','')));
+  const text = await todaySummary(db, owner.chat_id, now);
+  const results = await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)
+      SELECT ?,?,?,?,?,'done',? WHERE NOT EXISTS(SELECT 1 FROM daily_briefings WHERE local_date=?)`)
+      .bind(updateId, owner.user_id, owner.chat_id, text, now, text, date),
+    db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(JSON.stringify(progressButton), updateId),
+    db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
+    db.prepare('INSERT OR IGNORE INTO daily_briefings(local_date,job_id,created_at) SELECT ?,id,? FROM jobs WHERE update_id=?').bind(date, now, updateId),
+  ]);
+  return (results[0]?.meta.changes ?? 0) === 1;
+}
+
+export async function enqueueDueTaskReminders(db: D1Database, now = Date.now()): Promise<boolean> {
+  const due = (await db.prepare(`SELECT id,title,status,revision,due_at FROM tasks
+    WHERE status='open' AND due_at<=? AND due_at>? ORDER BY due_at,id LIMIT 5`).bind(now, now-5*60_000).all<Task>()).results;
+  let queued = false;
+  for (const task of due) {
+    const taskNumber = Number(task.id.slice(1));
+    const updateId = -(1_000_000_000_000 + Math.floor(task.due_at! / 60_000) * 1_000 + taskNumber);
+    const text = `Đến giờ cho ${task.id}: ${task.title}\n\nAnh chọn trạng thái cho việc này nhé.`;
+    const results = await db.batch([
+      db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)
+        SELECT ?,owner.user_id,owner.chat_id,?,?, 'done', ? FROM owner
+        WHERE NOT EXISTS(SELECT 1 FROM task_reminders WHERE task_id=? AND due_at=?)`)
+        .bind(updateId, text, now, text, task.id, task.due_at),
+      db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(JSON.stringify(taskReminderButtons(task.id)), updateId),
+      db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
+      db.prepare('INSERT OR IGNORE INTO task_reminders(task_id,due_at,job_id,created_at) SELECT ?,?,id,? FROM jobs WHERE update_id=?').bind(task.id, task.due_at, now, updateId),
+    ]);
+    queued ||= (results[0]?.meta.changes ?? 0) === 1;
+  }
+  return queued;
+}
+
+export async function enqueueWeeklyReview(db: D1Database, now = Date.now()): Promise<boolean> {
+  if (localDay(now) !== 0 || localHour(now) !== 19) return false;
+  const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND status='active' LIMIT 1")
+    .bind(weekStart(now)).first<WeeklyPlan>();
+  if (!plan) return false;
+  const open = await tasks(db);
+  const counts = await db.prepare(`SELECT SUM(CASE WHEN kind='job_application' THEN 1 ELSE 0 END) AS applications,
+    SUM(CASE WHEN kind='run' THEN 1 ELSE 0 END) AS runs FROM weekly_progress_events WHERE week_start=?`).bind(plan.week_start)
+    .first<{applications:number|null;runs:number|null}>();
+  const text = `${formatProgress(plan, counts?.applications ?? 0, counts?.runs ?? 0)}\n\nReview tuần:\n${open.length ? open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n') : 'Không còn task mở.'}\n\nChọn task cần giữ: /review carry T...`;
+  const updateId = -(4_000_000_000 + Number(plan.week_start.replaceAll('-','')));
+  const results = await db.batch([
+    db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)
+      SELECT ?,owner.user_id,owner.chat_id,?,?, 'done', ? FROM owner
+      WHERE NOT EXISTS(SELECT 1 FROM weekly_reviews WHERE week_start=?)`).bind(updateId,text,now,text,plan.week_start),
+    db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(JSON.stringify(progressButton), updateId),
+    db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
+    db.prepare('INSERT OR IGNORE INTO weekly_reviews(week_start,job_id,created_at) SELECT ?,id,? FROM jobs WHERE update_id=?').bind(plan.week_start,now,updateId),
   ]);
   return (results[0]?.meta.changes ?? 0) === 1;
 }

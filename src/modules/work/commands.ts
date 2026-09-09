@@ -1,6 +1,9 @@
 export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference: string }
   | { kind: 'list'; includeDone: boolean } | { kind: 'confirm'; target?: string } | { kind: 'reject'; target?: string }
   | { kind: 'week' } | { kind: 'weekStatus' } | { kind: 'progressList' }
+  | { kind: 'today' } | { kind: 'review'; carry?: string }
+  | { kind: 'schedule'; reference: string; day: number; month: number; year?: number; hour: number; minute: number }
+  | { kind: 'defer'; reference: string } | { kind: 'clearSchedule'; reference: string }
   | { kind: 'progress'; activity: 'job_application'; detail: string }
   | { kind: 'progress'; activity: 'run'; date?: { day: number; month: number; year?: number } }
   | { kind: 'progressChange'; action: 'delete'|'rename'; reference: string; detail?: string }
@@ -13,6 +16,9 @@ export function parseCommand(text: string): Command {
   const callback = value.match(/^_navi:(confirm|reject):([a-z]+:[a-z0-9-]+)$/iu);
   if (callback) return { kind: callback[1] === 'confirm' ? 'confirm' : 'reject', target: callback[2]!.toLowerCase() };
   if (/^_navi:show:progress$/iu.test(value)) return { kind: 'progressList' };
+  const taskAction = value.match(/^_navi:task:(done|defer|clear):(T\d+)$/iu);
+  if (taskAction) return taskAction[1] === 'done' ? { kind: 'done', reference: taskAction[2]!.toUpperCase() }
+    : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
     const title = add[1]!.trim().replace(/\s+/g, ' ');
@@ -25,6 +31,15 @@ export function parseCommand(text: string): Command {
   if (/^(?:\/list(?:@\w+)?|anh còn việc gì\??|còn việc gì\??|danh sách(?: công việc)?|xem công việc)$/iu.test(value)) return { kind: 'list', includeDone: false };
   if (/^(?:em đã thêm task chưa|anh đã thêm task chưa|task đó đã được thêm chưa|trạng thái task)$/iu.test(value)) return { kind: 'status' };
   if (/^\/(?:start|help)(?:@\w+)?$/iu.test(value)) return { kind: 'help' };
+  if (/^(?:\/today(?:@\w+)?|hôm nay có gì|hôm nay làm gì)$/iu.test(value)) return { kind: 'today' };
+  const schedule = value.match(/^\/schedule(?:@\w+)?\s+(T\d+)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+(\d{1,2})(?::(\d{2}))?$/iu);
+  if (schedule) {
+    const day=Number(schedule[2]),month=Number(schedule[3]),year=schedule[4]?Number(schedule[4]):undefined,hour=Number(schedule[5]),minute=Number(schedule[6] ?? 0);
+    if(day>=1&&day<=31&&month>=1&&month<=12&&hour>=0&&hour<=23&&minute>=0&&minute<=59) return {kind:'schedule',reference:schedule[1]!.toUpperCase(),day,month,year,hour,minute};
+  }
+  const carry = value.match(/^\/review(?:@\w+)?\s+carry\s+(T\d+)$/iu);
+  if (carry) return { kind: 'review', carry: carry[1]!.toUpperCase() };
+  if (/^(?:\/review(?:@\w+)?|review tuần)$/iu.test(value)) return { kind: 'review' };
   const progressChange = value.match(/^\/progress(?:@\w+)?\s+(delete|xóa|xoá|edit|sửa)\s+(P\d+)(?:\s+(.+))?$/iu);
   if (progressChange) {
     const action = /^(?:delete|xóa|xoá)$/iu.test(progressChange[1]!) ? 'delete' : 'rename';
@@ -61,4 +76,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\n\nChỉnh tiến độ\n/progress delete P12\n/progress edit P12 Tên vị trí mới\nSau đó anh trả lời “đúng” để xác nhận.\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nKết quả chỉ được ghi theo xác nhận của anh.`;
+export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nKết quả chỉ được ghi theo xác nhận của anh.`;

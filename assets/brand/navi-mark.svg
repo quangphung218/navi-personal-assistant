@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">Navi hidden path mark</title>
+  <desc id="desc">A folded path forming an abstract N with a forward waypoint.</desc>
+  <path fill="#132A35" d="M42 65c0-12 10-22 22-22h24c7 0 13 3 17 8l69 91c4 5 11 8 17 8h1c12 0 22-10 22-22v-35c0-12 10-22 22-22h0v59c0 24-19 43-43 43h-3c-20 0-39-9-51-25L70 90h-6v79c0 12-10 22-22 22V65Z"/>
+  <path fill="#8FA89A" d="M64 43h24c7 0 13 3 17 8l28 37-28 21-35-46c-4-5-10-8-17-8H64V43Z"/>
+  <path fill="#E47E68" d="m133 88 20-15 21 28-20 15-21-28Z"/>
+  <circle cx="194" cy="51" r="12" fill="#E47E68"/>
+</svg>

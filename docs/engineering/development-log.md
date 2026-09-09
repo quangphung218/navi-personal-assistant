@@ -42,3 +42,12 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Chưa làm / giới hạn: kế hoạch tuần, cam kết, thói quen, nhắc lịch, bộ nhớ hội thoại, web admin, GitHub integration và diễn tập restore chưa có. OpenRouter chưa được gọi trong test tự động.
 - Chi phí / dữ liệu / rủi ro: AI dự phòng giữ trần 0,80 USD/tháng trong D1; secret chỉ nằm trong Cloudflare/`.dev.vars` và không ghi vào nhật ký.
 - Bước tiếp theo: thêm flow kế hoạch tuần gồm một mục tiêu, một cam kết và hai thói quen, vẫn dùng approval trước khi lưu.
+
+## 2026-09-09 10:30 — Chốt nhận diện Navi
+
+- Bối cảnh: chọn hướng logo `The Hidden Path` từ các concept đã xem.
+- Đã làm: thêm `assets/brand/navi-mark.svg` cho nền trong suốt và `assets/brand/navi-app-icon.svg` cho avatar/app icon; cập nhật README.
+- Quyết định: dải đường gấp tạo chữ N bằng khoảng âm, waypoint coral là tín hiệu bước tiếp theo; bảng màu ink navy, sage và coral.
+- Đã kiểm chứng: SVG dùng viewBox vuông, không phụ thuộc font hoặc runtime, hiển thị được ở kích thước nhỏ.
+- Chưa làm / giới hạn: chưa có wordmark hoàn chỉnh, favicon PNG/ICO hoặc kiểm tra hiển thị Telegram thực tế.
+- Bước tiếp theo: dùng mark này trong web/admin surface khi bắt đầu xây giao diện; tiếp tục flow kế hoạch tuần.

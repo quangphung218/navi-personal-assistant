@@ -1,5 +1,7 @@
 # Navi — The Hidden Path
 
+`navi-hidden-path-transparent.png` is the transparent PNG variant for compositing and the README. Its alpha channel has been verified (0–255). The ivory ribbon works best against a contrasting background. It is a raster asset, not SVG.
+
 `navi-hidden-path.png` is the current raster logo, reconstructed with the original concept 01 image as a visual reference. Use this square image for the README and avatar uploads.
 
 Preserve the broad ivory ribbon, rounded droplet terminal at lower left, sweeping diagonal, shaded folds and detached coral circle at upper right. The ribbon has a variable-width silhouette; do not replace it with a constant-width N stroke. No sage segment.

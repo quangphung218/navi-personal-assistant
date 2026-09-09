@@ -1,6 +1,6 @@
 # Navi
 
-<img src="assets/brand/navi-hidden-path.png" alt="Navi — The Hidden Path" width="240" />
+<img src="assets/brand/navi-hidden-path-transparent.png" alt="Navi — The Hidden Path" width="240" />
 
 Ban trợ lý cá nhân theo module cho công việc, đời sống, thói quen và mục tiêu. Chat là nơi tương tác hằng ngày; web phục vụ xem tổng thể, chi tiết và quản trị.
 

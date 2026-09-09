@@ -100,3 +100,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: xem ảnh kết quả cạnh reference trong hội thoại: đầu trái hình giọt nước, ribbon rộng cong với nếp gấp tối, chấm coral tách riêng. Đây là bản tái dựng, không phải crop nguyên pixel.
 - Chưa làm / giới hạn: asset hiện là PNG nền tối, chưa có vector hoặc nền trong suốt. Chưa thay avatar Telegram.
 - Bước tiếp theo: dùng PNG hiện tại; mọi bản vector tiếp theo cần đối chiếu hình render với reference trước khi thay thế.
+
+## 2026-09-09 — Logo nền trong suốt
+
+- Yêu cầu: bỏ nền navy của phương án 01.
+- Đã làm: tạo `assets/brand/navi-hidden-path-transparent.png` từ logo hiện tại bằng công cụ sửa ảnh; cập nhật README. Giữ bản nền tối làm tham chiếu.
+- Kiểm chứng: đã xem ảnh xuất, kiểm tra PNG 1254 × 1254 có alpha với giá trị từ 0 đến 255.
+- Giới hạn: bản raster tái dựng, chưa có SVG vector.

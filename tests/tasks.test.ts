@@ -20,7 +20,7 @@ import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskR
 import { parseCommand } from '../src/modules/work/commands';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
-import { pilotConversationCorpus } from './fixtures/pilot-conversation-corpus';
+import { pilotConversationCorpus, pilotExecutionWalkthrough } from './fixtures/pilot-conversation-corpus';
 const db = env.DB;
 function update(id: number, text: string, user=123): TelegramUpdate {
   return { update_id:id, message:{from:{id:user,is_bot:false},chat:{id:user,type:'private'},text} };
@@ -50,6 +50,30 @@ describe('task conversation on real D1 bindings',()=>{
   });
   it('keeps the pilot conversation corpus classified as intended',()=>{
     for (const sample of pilotConversationCorpus) expect(parseCommand(sample.text).kind).toBe(sample.kind);
+  });
+  it('runs the pilot execution walkthrough through Telegram, D1, and outbox',async()=>{
+    const now=Date.now();
+    const tomorrow = new Date(now + 24*60*60*1000 + 7*60*60*1000);
+    const scheduledDay = tomorrow.getUTCDate(), scheduledMonth = tomorrow.getUTCMonth()+1, scheduledYear = tomorrow.getUTCFullYear();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Public Navi lên GitHub'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách 2 buổi'],[7,'đúng']] as const) {
+      await receive(update(id,text)); await processNext(db,now); await replies();
+    }
+    for(const [offset,sample] of pilotExecutionWalkthrough.entries()) {
+      const text = sample.text.replace('{{tomorrow}}',`${scheduledDay}/${scheduledMonth}`);
+      await receive(update(offset+8,text)); expect(await processNext(db,now), text).toBe(true);
+      expect((await replies()).at(-1)).toContain(sample.reply);
+    }
+    expect((await db.prepare('SELECT note FROM weekly_checkins ORDER BY id').all<{note:string}>()).results).toEqual([
+      {note:'Anh đã public Navi lên GitHub'},
+      {note:'Anh vừa apply job Backend Developer'},
+      {note:'Hôm nay anh đã chạy bộ'},
+      {note:'Anh đã đọc sách'},
+    ]);
+    expect(await db.prepare('SELECT due_at FROM tasks WHERE id=?').bind('T12').first<{due_at:number}>())
+      .toMatchObject({due_at:Date.UTC(scheduledYear,scheduledMonth-1,scheduledDay,2)});
+    expect((await db.prepare("SELECT outcome FROM checkin_outcomes ORDER BY source_update").all<{outcome:string}>()).results)
+      .toEqual([{outcome:'recorded'},{outcome:'recorded'},{outcome:'recorded'},{outcome:'recorded'}]);
   });
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
     await link(); await receive(update(2,'thêm task viết proposal')); await processNext(db); await replies();

@@ -217,3 +217,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: sau thói quen đầu tiên, Navi cho phép anh nhắn “bỏ qua” để không tạo thói quen thứ hai. Bản tóm tắt trước khi xác nhận cũng chỉ hiện các mục thực sự đã chọn.
 - Dữ liệu: mục thói quen trống không còn được tạo trong `weekly_plan_items`, vì vậy `/today`, nhắc tiến độ và review tự động chỉ đọc ba mục còn lại.
 - Đã kiểm chứng: regression test lập kế hoạch một thói quen, kiểm tra bản tóm tắt, dữ liệu D1 và dashboard.
+
+## 2026-09-09 21:35 — Corpus pilot end-to-end
+
+- Đã làm: một walkthrough từ các câu pilot thật giờ đi qua Telegram webhook, inbox, Processor, D1 và outbox giả lập trong cùng một test.
+- Bao phủ: lập tuần, bốn dạng check-in, thêm task, đặt nhắc, dashboard, tiến độ, danh sách task và câu cảm ơn.
+- Giới hạn: corpus 20 câu vẫn giữ test phân loại đầy đủ; walkthrough ưu tiên các luồng có trạng thái và dữ liệu quan sát được, sẽ bổ sung trường hợp mơ hồ/sửa dữ liệu theo log pilot thật khi có thêm dữ liệu.

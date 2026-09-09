@@ -20,3 +20,18 @@ export const pilotConversationCorpus = [
   { text: 'Hủy', kind: 'reject', outcome: 'non_mutating' },
   { text: 'Anh đang suy nghĩ thêm', kind: 'unknown', outcome: 'non_mutating' },
 ] as const;
+
+// Các câu này được chạy qua webhook → inbox → Processor → outbox/D1 trong test,
+// thay vì chỉ kiểm tra nhánh parser. Chúng là lát cắt của tuần pilot đã xác nhận.
+export const pilotExecutionWalkthrough = [
+  { text: 'Anh đã public Navi lên GitHub', reply: 'Đã ghi nhận cho “Public Navi lên GitHub”' },
+  { text: 'Anh vừa apply job Backend Developer', reply: 'Đã ghi nhận cho “Apply 5 jobs”' },
+  { text: 'Hôm nay anh đã chạy bộ', reply: 'Đã ghi nhận cho “Chạy bộ 3 buổi”' },
+  { text: 'Anh đã đọc sách', reply: 'Đã ghi nhận cho “Đọc sách 2 buổi”' },
+  { text: '/add Viết README', reply: 'Đã thêm T12: Viết README' },
+  { text: '/schedule T12 {{tomorrow}} 09:00', reply: 'Đã đặt nhắc T12: Viết README' },
+  { text: '/today', reply: 'Hôm nay' },
+  { text: '/progress', reply: 'Tiến độ tuần' },
+  { text: 'Anh còn việc gì?', reply: '○ T12: Viết README' },
+  { text: 'Cảm ơn em', reply: 'Dạ, em ở đây' },
+] as const;

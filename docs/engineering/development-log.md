@@ -223,3 +223,8 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: một walkthrough từ các câu pilot thật giờ đi qua Telegram webhook, inbox, Processor, D1 và outbox giả lập trong cùng một test.
 - Bao phủ: lập tuần, bốn dạng check-in, thêm task, đặt nhắc, dashboard, tiến độ, danh sách task và câu cảm ơn.
 - Giới hạn: corpus 20 câu vẫn giữ test phân loại đầy đủ; walkthrough ưu tiên các luồng có trạng thái và dữ liệu quan sát được, sẽ bổ sung trường hợp mơ hồ/sửa dữ liệu theo log pilot thật khi có thêm dữ liệu.
+
+## 2026-09-09 21:50 — Độ tin cậy ghi check-in
+
+- Đã làm: gom quy tắc chống trùng, số lượng, trạng thái hoàn thành và telemetry vào một đường ghi chung cho câu check-in trực tiếp lẫn nút chọn mục mơ hồ.
+- Đã kiểm chứng: một walkthrough D1/Telegram bao phủ chọn mục, ngày chạy bộ cụ thể, sửa check-in sau xác nhận, nút chọn hết hạn và xoá check-in sau xác nhận.

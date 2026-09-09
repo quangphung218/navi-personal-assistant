@@ -13,6 +13,7 @@ type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename';
 type CheckInChange = { id: number; checkin_id: number; action: 'delete'|'rename'; new_note: string|null };
 type CheckInSelection = { id: number; week_start: string; source_update: number; text: string; candidate_item_ids: string; status: 'pending'|'selected'|'rejected'; expires_at: number|null };
 type PlanItem = { id: number; kind: 'goal'|'commitment'|'habit'; position: number; title: string; normalized_title: string; metric: 'count'|'completion'; target_count: number|null; status: 'active'|'completed'; completed: number };
+type StagedCheckIn = { item: PlanItem; text: string; weekStart: string; sourceUpdate: number; occurredAt: number; chatId: string; outcome: 'recorded'|'selected' };
 
 function localDate(now: number): string {
   return new Date(now + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -63,6 +64,11 @@ function formatLocalTime(timestamp: number): string {
 function targetFrom(text: string): number | undefined {
   const value = Number(text.match(/\b(\d{1,3})\b/u)?.[1]);
   return Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function checkInQuantity(text: string): number {
+  const withoutDate = normalize(text).replace(/ngày\s+\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{4})?/u,'');
+  return Math.max(1, Number(withoutDate.match(/\b(\d{1,3})\b/u)?.[1] ?? 1));
 }
 
 function metricFor(title: string): { metric: 'count'|'completion'; target?: number } {
@@ -123,6 +129,29 @@ function checkInKey(item: PlanItem, text: string, now: number): string {
     return `apply:${detail}`;
   }
   return value;
+}
+
+async function stageCheckIn(db: D1Database, statements: D1PreparedStatement[], guard: string, args: () => (string|number)[], checkIn: StagedCheckIn): Promise<{ already: boolean; progress: string }> {
+  const quantity = checkIn.item.metric === 'count' ? checkInQuantity(checkIn.text) : 1;
+  const key = checkInKey(checkIn.item,checkIn.text,checkIn.occurredAt);
+  const existing = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=? OR (plan_item_id=? AND normalized_note=?)')
+    .bind(checkIn.sourceUpdate,checkIn.item.id,key).first<{id:number}>();
+  const completed = checkIn.item.completed + quantity;
+  const progress = checkIn.item.metric === 'count' ? `${completed}/${checkIn.item.target_count}` : 'đã hoàn thành';
+  if (existing) return { already:true, progress };
+  statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
+    SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(checkIn.weekStart,checkIn.item.id,quantity,checkIn.text,key,checkIn.sourceUpdate,checkIn.occurredAt,...args()));
+  if (checkIn.item.metric === 'completion' || (checkIn.item.target_count !== null && completed >= checkIn.item.target_count)) {
+    statements.push(db.prepare(`UPDATE weekly_plan_items SET status='completed' WHERE id=? AND ${guard}`).bind(checkIn.item.id,...args()));
+  }
+  if (checkIn.outcome === 'recorded') {
+    statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
+      SELECT ?,?,'recorded',? WHERE ${guard}`).bind(checkIn.chatId,checkIn.sourceUpdate,checkIn.occurredAt,...args()));
+  } else {
+    statements.push(db.prepare(`UPDATE checkin_outcomes SET outcome='selected' WHERE chat_id=? AND source_update=? AND outcome='ambiguous' AND ${guard}`)
+      .bind(checkIn.chatId,checkIn.sourceUpdate,...args()));
+  }
+  return { already:false, progress };
 }
 
 function formatPlanItems(items: PlanItem[], showAll = false): string {
@@ -385,20 +414,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
         else {
           const item = candidates[0]!;
-          const quantity = item.metric === 'count' ? Math.max(1, Number(command.text.match(/\b(\d{1,3})\b/u)?.[1] ?? 1)) : 1;
           const occurredAt = command.date ? Date.parse(`${datedRunLabel(command.date,now)!}T12:00:00+07:00`) : now;
-          const key = checkInKey(item,command.text,occurredAt);
-          const already = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=? OR (plan_item_id=? AND normalized_note=?)').bind(job.update_id,item.id,key).first<{id:number}>();
-          if (already) result = `Cập nhật này đã được ghi trước đó cho “${item.title}”.`;
+          const staged = await stageCheckIn(db,statements,guard,args,{item,text:command.text,weekStart:currentWeek,sourceUpdate:job.update_id,occurredAt,chatId:job.chat_id,outcome:'recorded'});
+          if (staged.already) result = `Cập nhật này đã được ghi trước đó cho “${item.title}”.`;
           else {
-            statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
-              SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek,item.id,quantity,command.text,key,job.update_id,occurredAt,...args()));
-            statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
-              SELECT ?,?,'recorded',? WHERE ${guard}`).bind(job.chat_id,job.update_id,now,...args()));
-            const completed = item.completed + quantity;
-            if (item.metric === 'completion' || (item.target_count !== null && completed >= item.target_count)) statements.push(db.prepare(`UPDATE weekly_plan_items SET status='completed' WHERE id=? AND ${guard}`).bind(item.id,...args()));
-            const progress = item.metric === 'count' ? `${completed}/${item.target_count}` : 'đã hoàn thành';
-            result = `Đã ghi nhận cho “${item.title}”: ${progress}.`;
+            result = `Đã ghi nhận cho “${item.title}”: ${staged.progress}.`;
             replyMarkup = progressButton;
           }
         }
@@ -418,20 +438,12 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         result = 'Lựa chọn này không còn hiệu lực. Anh gửi lại cập nhật để Navi hỏi lại nhé.';
       }
       else {
-        const quantity = item.metric === 'count' ? Math.max(1, Number(selection.text.match(/\b(\d{1,3})\b/u)?.[1] ?? 1)) : 1;
-        const key = checkInKey(item,selection.text,now);
-        const existing = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=? OR (plan_item_id=? AND normalized_note=?)').bind(selection.source_update,item.id,key).first<{id:number}>();
-        if (existing) result = `Cập nhật này đã được ghi cho “${item.title}”.`;
+        const staged = await stageCheckIn(db,statements,guard,args,{item,text:selection.text,weekStart:selection.week_start,sourceUpdate:selection.source_update,occurredAt:now,chatId:job.chat_id,outcome:'selected'});
+        if (staged.already) result = `Cập nhật này đã được ghi cho “${item.title}”.`;
         else {
-          statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
-            SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(selection.week_start,item.id,quantity,selection.text,key,selection.source_update,now,...args()));
-          statements.push(db.prepare(`UPDATE checkin_outcomes SET outcome='selected' WHERE chat_id=? AND source_update=? AND outcome='ambiguous' AND ${guard}`)
-            .bind(job.chat_id,selection.source_update,...args()));
           statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='selected',selected_item_id=?,decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
             .bind(item.id,now,selection.id,...args()));
-          const completed = item.completed + quantity;
-          if (item.metric === 'completion' || (item.target_count !== null && completed >= item.target_count)) statements.push(db.prepare(`UPDATE weekly_plan_items SET status='completed' WHERE id=? AND ${guard}`).bind(item.id,...args()));
-          result = `Đã ghi nhận cho “${item.title}”: ${item.metric === 'count' ? `${completed}/${item.target_count}` : 'đã hoàn thành'}.`;
+          result = `Đã ghi nhận cho “${item.title}”: ${staged.progress}.`;
           replyMarkup = progressButton;
         }
       }

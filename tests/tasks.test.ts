@@ -157,6 +157,30 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare('SELECT status,selected_item_id FROM checkin_selection_requests WHERE source_update=8').first()).toMatchObject({status:'selected',selected_item_id:2});
     expect(await db.prepare('SELECT outcome FROM checkin_outcomes WHERE source_update=8').first()).toMatchObject({outcome:'selected'});
   });
+  it('keeps selected, expired, dated, and corrected check-ins consistent end to end',async()=>{
+    const now=Date.now(), local=new Date(now+7*60*60*1000), dated=`Ngày ${local.getUTCDate()}/${local.getUTCMonth()+1} anh đã chạy bộ`;
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Public Navi'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const){
+      await receive(update(id,text)); await processNext(db,now); await replies();
+    }
+    await receive(update(8,'Anh đã hoàn thành Navi')); await processNext(db,now); await replies();
+    await receive(update(9,'_navi:checkin:select:8:1')); await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Ship Navi”');
+    await receive(update(10,dated)); await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Chạy bộ 3 buổi”: 1/3');
+    await receive(update(11,'/progress edit C1 Ship Navi production')); await processNext(db,now); await replies();
+    await receive(update(12,'_navi:confirm:checkin:1')); await processNext(db,now);
+    expect(await db.prepare('SELECT note FROM weekly_checkins WHERE id=1').first()).toMatchObject({note:'Ship Navi production'});
+    await receive(update(13,'Anh đã hoàn thành Navi')); await processNext(db,now); await replies();
+    await db.prepare('UPDATE checkin_selection_requests SET expires_at=? WHERE source_update=13').bind(now-1).run();
+    await receive(update(14,'_navi:checkin:select:13:1')); await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('không còn hiệu lực');
+    await receive(update(15,'/progress delete C1')); await processNext(db,now); await replies();
+    await receive(update(16,'_navi:confirm:checkin:1')); await processNext(db,now);
+    expect((await db.prepare('SELECT note FROM weekly_checkins ORDER BY id').all<{note:string}>()).results).toEqual([{note:dated}]);
+    expect((await db.prepare('SELECT outcome FROM checkin_outcomes ORDER BY source_update').all<{outcome:string}>()).results)
+      .toEqual([{outcome:'selected'},{outcome:'recorded'},{outcome:'ambiguous'}]);
+  });
   it('records weekly applications and one run per local day without duplicates',async()=>{
     await link();
     for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db);}

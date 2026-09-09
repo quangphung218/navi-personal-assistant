@@ -8,7 +8,7 @@ export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference
   | { kind: 'progress'; activity: 'run'; date?: { day: number; month: number; year?: number } }
   | { kind: 'progressChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkInChange'; action: 'delete'|'rename'; reference: string; detail?: string }
-  | { kind: 'checkIn'; text: string }
+  | { kind: 'checkIn'; text: string; date?: { day: number; month: number; year?: number } }
   | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
   | { kind: 'reminders'; enabled?: boolean }
   | { kind: 'status' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
@@ -70,7 +70,7 @@ export function parseCommand(text: string): Command {
   if (datedRun) {
     const day = Number(datedRun[1]), month = Number(datedRun[2]);
     const year = datedRun[3] ? Number(datedRun[3]) : undefined;
-    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
+    if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, ''), date:{day,month,year} };
   }
   if (/^(?:\/log\s+run|(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?)[.!]?$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   if (/^(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:xong|hoàn thành|làm xong|public|đăng|viết|đọc|học)\b[\s\S]{1,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };

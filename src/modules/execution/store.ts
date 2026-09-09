@@ -11,7 +11,7 @@ type ReminderPreference = { weekly_progress_enabled: number; delivery_hour: numb
 type ProgressEvent = { id: number; kind: 'job_application'|'run'; label: string; normalized_label: string };
 type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename'; new_label: string|null };
 type CheckInChange = { id: number; checkin_id: number; action: 'delete'|'rename'; new_note: string|null };
-type CheckInSelection = { id: number; week_start: string; source_update: number; text: string; candidate_item_ids: string; status: 'pending'|'selected'|'rejected' };
+type CheckInSelection = { id: number; week_start: string; source_update: number; text: string; candidate_item_ids: string; status: 'pending'|'selected'|'rejected'; expires_at: number|null };
 type PlanItem = { id: number; kind: 'goal'|'commitment'|'habit'; position: number; title: string; normalized_title: string; metric: 'count'|'completion'; target_count: number|null; status: 'active'|'completed'; completed: number };
 
 function localDate(now: number): string {
@@ -105,10 +105,24 @@ async function ensurePlanItems(db: D1Database, plan: WeeklyPlan, now: number): P
 function checkInCandidates(items: PlanItem[], text: string): PlanItem[] {
   const message = normalize(text);
   const ignored = new Set(['anh','vua','vừa','da','đã','xong','hoan','thành','hoàn','làm','của','với','cho','trong','tuần','này']);
-  return items.map(item => ({ item, score: item.normalized_title.split(/[^\p{L}\p{N}]+/u)
-    .filter(token => token.length > 2 && !ignored.has(token)).filter(token => message.includes(token)).length }))
-    .filter(match => match.score > 0).sort((a,b) => b.score-a.score).filter(match => match.score === Math.max(...items.map(candidate => candidate.normalized_title.split(/[^\p{L}\p{N}]+/u).filter(token => token.length > 2 && message.includes(token)).length)))
-    .map(match => match.item);
+  const matches = items.map(item => ({ item, score: item.normalized_title.split(/[^\p{L}\p{N}]+/u)
+    .filter(token => token.length > 2 && !ignored.has(token)).filter(token => message.includes(token)).length })).filter(match => match.score > 0);
+  const highest = Math.max(0,...matches.map(match=>match.score));
+  return matches.filter(match => match.score === highest).sort((a,b) => b.score-a.score).map(match => match.item);
+}
+
+function checkInKey(item: PlanItem, text: string, now: number): string {
+  const value = normalize(text);
+  if (item.kind === 'habit' && /chạy|run/iu.test(item.title)) {
+    const dated = value.match(/ngày\s+(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?/iu);
+    const date = dated ? datedRunLabel({day:Number(dated[1]),month:Number(dated[2]),year:dated[3] ? Number(dated[3]) : undefined},now) : localDate(now);
+    return `run:${date ?? localDate(now)}`;
+  }
+  if (item.kind === 'commitment' && /apply|ứng tuyển/iu.test(item.title)) {
+    const detail = value.replace(/^.*?(?:apply|ứng tuyển)(?:\s+(?:job|vị trí))?\s*/iu,'').replace(/^(?:thêm\s+)/iu,'');
+    return `apply:${detail}`;
+  }
+  return value;
 }
 
 function formatPlanItems(items: PlanItem[], showAll = false): string {
@@ -210,7 +224,9 @@ async function todaySummary(db: D1Database, chatId: string, now: number): Promis
     .bind(start,end).all<Task>()).results;
   const unscheduled = due.length < 6 ? (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE status='open' AND due_at IS NULL ORDER BY created_at,id LIMIT ?")
     .bind(6-due.length).all<Task>()).results : [];
-  const taskLines = [...due,...unscheduled].map(task => `• ${task.id}: ${task.title}${task.due_at ? ` — ${formatLocalTime(task.due_at)}` : ''}`);
+  const carryovers = (await db.prepare(`SELECT task_id FROM weekly_task_carryovers WHERE week_start=?`).bind(weekStart(now)).all<{task_id:string}>()).results;
+  const carried = new Set(carryovers.map(item=>item.task_id));
+  const taskLines = [...due,...unscheduled].map(task => `• ${task.id}: ${task.title}${carried.has(task.id) ? ' — giữ từ tuần trước' : task.due_at ? ` — ${formatLocalTime(task.due_at)}` : ''}`);
   if (!plan) return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}\n\nAnh nhắn /week để lập kế hoạch tuần.`;
   const items = await ensurePlanItems(db, plan, now), counts = progressCounts(items);
   return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}`;
@@ -252,6 +268,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         if (command.kind === 'confirm' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
           statements.push(db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at) SELECT ?,?,?,?,?,?,? WHERE ${guard}`)
             .bind(draft.week_start, draft.chat_id, draft.goal, draft.commitment, draft.habit1, draft.habit2, now, ...args()));
+          statements.push(db.prepare(`UPDATE weekly_plans SET status='archived' WHERE chat_id=? AND week_start<>? AND status='active' AND ${guard}`)
+            .bind(draft.chat_id,draft.week_start,...args()));
           for (const item of planItemValues({ goal:draft.goal!, commitment:draft.commitment!, habit1:draft.habit1!, habit2:draft.habit2! })) {
             statements.push(db.prepare(`INSERT INTO weekly_plan_items(week_start,kind,position,title,normalized_title,metric,target_count,created_at)
               SELECT ?,?,?,?,?,?,?,? WHERE ${guard}`).bind(draft.week_start,item.kind,item.position,item.title,normalize(item.title),item.metric,item.target ?? null,now,...args()));
@@ -279,8 +297,14 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       }
     } else if (command.kind === 'week') {
       const date = weekStart(now);
-      statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,week_start,created_at) SELECT 1,?,'goal',?,? WHERE ${guard}`).bind(job.chat_id, date, now, ...args()));
-      result = 'Mình lập kế hoạch tuần này nhé. Mục tiêu công việc quan trọng nhất của anh là gì?';
+      const existing = await db.prepare("SELECT week_start FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(date,job.chat_id).first<{week_start:string}>();
+      if (existing) result = `Tuần bắt đầu ${date} đã có kế hoạch. Anh dùng /week status để xem tiến độ hoặc /review để tổng kết.`;
+      else {
+        const carryovers = (await db.prepare(`SELECT t.id,t.title FROM weekly_task_carryovers c JOIN tasks t ON t.id=c.task_id
+          WHERE c.week_start=? AND t.status='open' ORDER BY t.created_at,t.id`).bind(date).all<{id:string;title:string}>()).results;
+        statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,week_start,created_at) SELECT 1,?,'goal',?,? WHERE ${guard}`).bind(job.chat_id, date, now, ...args()));
+        result = `Mình lập kế hoạch tuần bắt đầu ${date} nhé.${carryovers.length ? `\n\nTask giữ từ tuần trước:\n${carryovers.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\nMục tiêu công việc quan trọng nhất của anh là gì?`;
+      }
     } else if (command.kind === 'today') {
       result = await todaySummary(db, job.chat_id, now);
     } else if (command.kind === 'schedule') {
@@ -339,6 +363,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
         .bind(currentWeek, job.chat_id).first<WeeklyPlan>();
       if (!plan) result = 'Tuần này chưa có kế hoạch đã xác nhận. Anh nhắn /week để tạo trước nhé.';
+      else if (command.date && !datedRunLabel(command.date, now)) result = 'Ngày check-in không hợp lệ. Anh ghi theo dạng: “Ngày 7/9 anh đã chạy bộ”.';
+      else if (command.date && (() => { const date = datedRunLabel(command.date, now)!; return date < currentWeek || date > weekEnd(currentWeek); })()) result = `Ngày check-in không nằm trong tuần đang theo dõi (${currentWeek} đến ${weekEnd(currentWeek)}).`;
       else {
         const items = await ensurePlanItems(db, plan, now);
         const candidates = checkInCandidates(items, command.text);
@@ -349,8 +375,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
         else if (candidates.length > 1) {
           const choices = candidates.slice(0,3);
-          statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_selection_requests(chat_id,week_start,source_update,text,candidate_item_ids,created_at)
-            SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(job.chat_id,currentWeek,job.update_id,command.text,JSON.stringify(choices.map(item=>item.id)),now,...args()));
+          statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_selection_requests(chat_id,week_start,source_update,text,candidate_item_ids,created_at,expires_at)
+            SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(job.chat_id,currentWeek,job.update_id,command.text,JSON.stringify(choices.map(item=>item.id)),now,now+24*60*60*1000,...args()));
           statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
             SELECT ?,?,'ambiguous',? WHERE ${guard}`).bind(job.chat_id,job.update_id,now,...args()));
           result = `Em thấy cập nhật này có thể thuộc vài mục. Anh chọn đúng mục để em ghi nhé:\n${choices.map(item=>`• ${item.title}`).join('\n')}`;
@@ -359,11 +385,13 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         else {
           const item = candidates[0]!;
           const quantity = item.metric === 'count' ? Math.max(1, Number(command.text.match(/\b(\d{1,3})\b/u)?.[1] ?? 1)) : 1;
-          const already = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=?').bind(job.update_id).first<{id:number}>();
+          const occurredAt = command.date ? Date.parse(`${datedRunLabel(command.date,now)!}T12:00:00+07:00`) : now;
+          const key = checkInKey(item,command.text,occurredAt);
+          const already = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=? OR (plan_item_id=? AND normalized_note=?)').bind(job.update_id,item.id,key).first<{id:number}>();
           if (already) result = `Cập nhật này đã được ghi trước đó cho “${item.title}”.`;
           else {
             statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
-              SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek,item.id,quantity,command.text,normalize(command.text),job.update_id,now,...args()));
+              SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek,item.id,quantity,command.text,key,job.update_id,occurredAt,...args()));
             statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
               SELECT ?,?,'recorded',? WHERE ${guard}`).bind(job.chat_id,job.update_id,now,...args()));
             const completed = item.completed + quantity;
@@ -375,21 +403,27 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       }
     } else if (command.kind === 'checkInSelect') {
-      const selection = await db.prepare(`SELECT id,week_start,source_update,text,candidate_item_ids,status FROM checkin_selection_requests
+      const selection = await db.prepare(`SELECT id,week_start,source_update,text,candidate_item_ids,status,expires_at FROM checkin_selection_requests
         WHERE chat_id=? AND source_update=? AND status='pending'`).bind(job.chat_id,command.sourceUpdate).first<CheckInSelection>();
       let candidateIds: number[] = [];
       try { const value: unknown = selection ? JSON.parse(selection.candidate_item_ids) : []; candidateIds = Array.isArray(value) && value.every(Number.isInteger) ? value : []; } catch { candidateIds = []; }
-      const item = selection && candidateIds.includes(command.itemId) ? await db.prepare(`SELECT i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,
+      const currentPlan = selection ? await db.prepare("SELECT week_start FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(selection.week_start,job.chat_id).first<{week_start:string}>() : undefined;
+      const expired = Boolean(selection && ((selection.expires_at ?? 0) <= now || !currentPlan));
+      const item = selection && !expired && candidateIds.includes(command.itemId) ? await db.prepare(`SELECT i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,
         COALESCE(SUM(c.quantity),0) AS completed FROM weekly_plan_items i LEFT JOIN weekly_checkins c ON c.plan_item_id=i.id
         WHERE i.id=? AND i.week_start=? GROUP BY i.id`).bind(command.itemId,selection.week_start).first<PlanItem>() : undefined;
-      if (!selection || !item) result = 'Lựa chọn này không còn hiệu lực. Anh gửi lại cập nhật để Navi hỏi lại nhé.';
+      if (!selection || !item) {
+        if (selection && expired) statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,selection.id,...args()));
+        result = 'Lựa chọn này không còn hiệu lực. Anh gửi lại cập nhật để Navi hỏi lại nhé.';
+      }
       else {
         const quantity = item.metric === 'count' ? Math.max(1, Number(selection.text.match(/\b(\d{1,3})\b/u)?.[1] ?? 1)) : 1;
-        const existing = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=?').bind(selection.source_update).first<{id:number}>();
+        const key = checkInKey(item,selection.text,now);
+        const existing = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=? OR (plan_item_id=? AND normalized_note=?)').bind(selection.source_update,item.id,key).first<{id:number}>();
         if (existing) result = `Cập nhật này đã được ghi cho “${item.title}”.`;
         else {
           statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
-            SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(selection.week_start,item.id,quantity,selection.text,normalize(selection.text),selection.source_update,now,...args()));
+            SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(selection.week_start,item.id,quantity,selection.text,key,selection.source_update,now,...args()));
           statements.push(db.prepare(`UPDATE checkin_outcomes SET outcome='selected' WHERE chat_id=? AND source_update=? AND outcome='ambiguous' AND ${guard}`)
             .bind(job.chat_id,selection.source_update,...args()));
           statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='selected',selected_item_id=?,decided_at=? WHERE id=? AND status='pending' AND ${guard}`)

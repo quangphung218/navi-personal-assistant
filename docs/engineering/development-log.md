@@ -204,3 +204,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: thêm corpus 20 câu tiếng Việt cho task, kế hoạch, check-in, câu mơ hồ, đọc trạng thái và câu không được tạo dữ liệu. Test cố định parser với kết quả kỳ vọng của từng câu.
 - Telemetry: `checkin_outcomes` chỉ lưu chat ID, update ID, nhãn outcome và thời điểm. Bốn outcome là `recorded`, `ambiguous`, `unmatched`, `selected`; không lưu lại nội dung tin nhắn ngoài lịch sử hội thoại đã có.
 - Đã kiểm chứng: test xác nhận check-in rõ ràng có `recorded`, lựa chọn inline chuyển `ambiguous` thành `selected`, cùng toàn bộ corpus và luồng D1/Worker.
+
+## 2026-09-09 21:05 — Chuyển tuần và review sau check-in chung
+
+- Đã làm: `/week` của tuần mới hiển thị task đã chọn carry-over; khi kế hoạch mới được xác nhận, kế hoạch active cũ được archive. `/today` đánh dấu task giữ từ tuần trước.
+- Review: kiểm tra thay đổi từ khi thêm check-in chung theo yêu cầu sản phẩm và quy tắc repo. Đã sửa matcher bỏ qua từ “làm”, khôi phục thời điểm thực cho check-in chạy bộ có ngày, giữ giới hạn tuần, và thêm hạn 24 giờ cho nút chọn mục mơ hồ. Nút sau hạn hoặc sau khi plan bị archive tự bị từ chối.
+- Giới hạn còn theo dõi: các bảng progress cũ vẫn tồn tại để nối dữ liệu pilot lịch sử vào check-in mới; chưa xoá khi chưa có migration/export thay thế. Corpus hiện khóa phân loại 20 câu và một số hành vi trọng yếu; sẽ mở rộng thành test end-to-end theo dữ liệu pilot thật.
+- Đã kiểm chứng: test review → carry → tuần mới → dashboard, check-in ngày cụ thể, 34 tests D1/Worker, typecheck và build.

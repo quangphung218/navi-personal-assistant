@@ -14,6 +14,7 @@ import genericCheckinsMigration from '../migrations/0013_generic_plan_checkins.s
 import checkinCorrectionsMigration from '../migrations/0014_checkin_corrections.sql?raw';
 import checkinSelectionMigration from '../migrations/0015_checkin_selection.sql?raw';
 import checkinOutcomesMigration from '../migrations/0016_checkin_outcomes.sql?raw';
+import expireCheckinSelectionsMigration from '../migrations/0017_expire_checkin_selections.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -37,7 +38,7 @@ async function replies() {
 }
 beforeEach(async()=>{
   for(const table of ['checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -77,6 +78,23 @@ describe('task conversation on real D1 bindings',()=>{
       {kind:'habit',title:'Đọc sách 2 buổi',metric:'count',target_count:2},
     ]);
   });
+  it('carries selected tasks into a new week and archives the prior plan',async()=>{
+    const now=Date.now(), local=new Date(now+7*60*60*1000), day=local.getUTCDay();
+    local.setUTCDate(local.getUTCDate()-(day===0?6:day-1)+7);
+    const nextWeek=local.toISOString().slice(0,10), previous=new Date(local.getTime()-7*24*60*60*1000).toISOString().slice(0,10);
+    await accept(db,update(1,'/start secret'),true,now);await processNext(db,now);await replies();
+    await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at)
+      VALUES(?,'123','Old goal','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách',?)`).bind(previous,now).run();
+    await db.prepare("INSERT INTO tasks(id,title,normalized_title,source_update,created_at) VALUES('T99','Viết README','viết readme',99,?)").bind(now).run();
+    await db.prepare('INSERT INTO weekly_task_carryovers(week_start,task_id,decided_at) VALUES(?,?,?)').bind(nextWeek,'T99',now).run();
+    await receive(update(2,'/week'));await processNext(db,local.getTime());
+    expect((await replies()).at(-1)).toContain('T99: Viết README');
+    for(const [id,text] of [[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db,local.getTime());}
+    expect(await db.prepare('SELECT status FROM weekly_plans WHERE week_start=?').bind(previous).first()).toMatchObject({status:'archived'});
+    expect(await db.prepare('SELECT status FROM weekly_plans WHERE week_start=?').bind(nextWeek).first()).toMatchObject({status:'active'});
+    await receive(update(8,'/today'));await processNext(db,local.getTime());
+    expect((await replies()).at(-1)).toContain('T99: Viết README — giữ từ tuần trước');
+  });
   it('records a generic completion only when it matches one planned item',async()=>{
     await link();
     for(const [id,text] of [[2,'/week'],[3,'Public Navi lên GitHub'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách 2 buổi'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db);}
@@ -110,11 +128,11 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(11,'Hôm nay anh đã chạy bộ')); await processNext(db);
     await receive(update(12,'/week status')); await processNext(db);
     const events=await db.prepare('SELECT note FROM weekly_checkins ORDER BY id').all<{note:string}>();
-    expect(events.results).toHaveLength(4);
+    expect(events.results).toHaveLength(2);
     expect(events.results[0]).toMatchObject({note:'Anh vừa apply job Backend Developer'});
     const status=(await replies()).at(-1);
-    expect(status).toContain('Apply: 2/5');
-    expect(status).toContain('Chạy bộ: 2/3');
+    expect(status).toContain('Apply: 1/5');
+    expect(status).toContain('Chạy bộ: 1/3');
   });
   it('records an explicitly dated run without calling AI',async()=>{
     const now=Date.now();
@@ -128,6 +146,7 @@ describe('task conversation on real D1 bindings',()=>{
     const events=await db.prepare('SELECT note FROM weekly_checkins').all<{note:string}>();
     expect(aiCalls).toBe(0);
     expect(events.results).toEqual([{note:'Ngày 7/9 anh đã chạy bộ'}]);
+    expect(await db.prepare('SELECT occurred_at FROM weekly_checkins').first()).toMatchObject({occurred_at:Date.parse('2026-09-07T12:00:00+07:00')});
   });
   it('lists, renames and deletes progress only after confirmation',async()=>{
     await link();

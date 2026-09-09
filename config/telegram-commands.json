@@ -1,0 +1,9 @@
+[
+  { "command": "week", "description": "Lập kế hoạch tuần" },
+  { "command": "progress", "description": "Xem tiến độ tuần" },
+  { "command": "add", "description": "Thêm task mới" },
+  { "command": "list", "description": "Xem task đang mở" },
+  { "command": "done", "description": "Hoàn thành task theo mã" },
+  { "command": "reminders", "description": "Xem hoặc tắt nhắc" },
+  { "command": "help", "description": "Hướng dẫn sử dụng Navi" }
+]

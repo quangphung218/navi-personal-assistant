@@ -13,6 +13,7 @@
     "build": "wrangler deploy --config wrangler.ingress.jsonc --dry-run --outdir dist/ingress && wrangler deploy --config wrangler.processor.jsonc --dry-run --outdir dist/processor",
     "check": "npm run types && npm run typecheck && npm test && npm run build",
     "doctor": "node scripts/doctor.mjs",
+    "telegram:menu": "node scripts/telegram-menu.mjs",
     "cloudflare:login": "wrangler login",
     "cloudflare:whoami": "wrangler whoami",
     "pretypes": "node -e \"require('node:fs').mkdirSync('.generated', {recursive:true})\"",

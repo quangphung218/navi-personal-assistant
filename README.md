@@ -4,7 +4,7 @@
 
 Ban trợ lý cá nhân theo module cho công việc, đời sống, thói quen và mục tiêu. Chat là nơi tương tác hằng ngày; web phục vụ xem tổng thể, chi tiết và quản trị.
 
-Đã có lát cắt Telegram đầu tiên: ghép tài khoản riêng, thêm việc, xem danh sách và xác nhận hoàn thành. Navi có thể lập kế hoạch tuần, ghi nhận ứng tuyển/chạy bộ và báo tiến độ định lượng. Tin nhắn không khớp lệnh rõ ràng được trả lời tùy chọn bằng DeepSeek V4 Flash qua OpenRouter, có trần chi phí trong D1. Dữ liệu lưu D1; Queue xử lý và Cron khôi phục công việc chờ. Xem [hướng dẫn bản task](docs/engineering/task-pilot.md). Nhắc lịch chủ động chưa được tích hợp.
+Đã có lát cắt Telegram đầu tiên: ghép tài khoản riêng, thêm việc, xem danh sách và xác nhận hoàn thành. Navi có menu lệnh native, lập kế hoạch tuần, ghi nhận ứng tuyển/chạy bộ, báo tiến độ định lượng và nhắc tiến độ lúc 20:00 khi chỉ tiêu còn thiếu. Tin nhắn không khớp lệnh rõ ràng được trả lời tùy chọn bằng DeepSeek V4 Flash qua OpenRouter, có trần chi phí trong D1. Dữ liệu lưu D1; Queue xử lý và Cron khôi phục công việc chờ. Xem [hướng dẫn bản task](docs/engineering/task-pilot.md).
 
 Bắt đầu: [hướng dẫn local và kết nối tài khoản](docs/engineering/local-setup.md). Chạy `npm run doctor`, `npm run check`, rồi `npm run dev`.
 

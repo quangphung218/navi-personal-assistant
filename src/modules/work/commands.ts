@@ -49,4 +49,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = 'Em đã sẵn sàng ghi công việc cho anh.\n\nThêm việc viết README\n/week — lập kế hoạch tuần\n/week status — tiến độ tuần\n/reminders — xem nhắc tiến độ\nAnh vừa apply job Backend Developer\nHôm nay anh đã chạy bộ\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nKết quả apply và chạy bộ được ghi theo xác nhận của anh.';
+export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nKết quả chỉ được ghi theo xác nhận của anh.`;

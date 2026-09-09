@@ -132,3 +132,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Kiểm soát: `/reminders` xem trạng thái, `/reminders off` tắt và `/reminders on` bật lại. Telegram retry chỉ retry delivery, không tạo thêm reminder.
 - Telemetry: thêm `job_metrics` chỉ chứa mốc thời gian queue, xử lý và giao tin cùng trạng thái delivery; không lưu nội dung chat. Bật Workers Logs và trace sampling 10% để điều tra lỗi runtime khi cần.
 - Đã kiểm chứng: test D1/Workers bao phủ incomplete plan, một nhắc duy nhất trong ngày, delivery và tắt/bật preference.
+
+## 2026-09-09 16:15 — Telegram command menu và trợ giúp theo tác vụ
+
+- Đã làm: đăng ký menu native gồm tuần, tiến độ, task, nhắc và trợ giúp cho private chat. `/help` được viết lại theo các luồng thực tế thay vì liệt kê kỹ thuật.
+- Quyết định: giữ menu ở 7 lệnh ngắn; thao tác có tham số như `/done T123` và `/reminders off` được đưa vào phần trợ giúp để menu không quá tải.
+- Vận hành: `npm run telegram:menu` đọc token từ `.dev.vars`, gọi Telegram qua HTTPS, kiểm tra danh sách sau khi ghi và không in token hay response thô.

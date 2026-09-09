@@ -10,6 +10,7 @@ import remindersMigration from '../migrations/0007_reminders_and_metrics.sql?raw
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueWeeklyProgressReminder, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
+import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
 const db = env.DB;
 function update(id: number, text: string, user=123): TelegramUpdate {
@@ -31,6 +32,12 @@ beforeEach(async()=>{
   await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
+  it('exposes a compact Telegram command menu backed by supported commands',()=>{
+    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','progress','add','list','done','reminders','help']);
+    expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
+    expect(parseCommand('/progress')).toEqual({kind:'weekStatus'});
+    expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
+  });
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
     await link(); await receive(update(2,'thêm task viết proposal')); await processNext(db); await replies();
     await receive(update(3,'em đã thêm task chưa')); await processNext(db);

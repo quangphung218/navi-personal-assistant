@@ -192,3 +192,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: khi một câu báo kết quả khớp nhiều mục kế hoạch, Navi hiện tối đa ba nút chọn thay vì yêu cầu anh gõ lại.
 - An toàn: selection request giữ chat, tuần, update gốc và danh sách item hợp lệ; callback chỉ ghi khi request còn pending và item nằm trong danh sách đó. Nút cũ hoặc callback sửa tay chỉ nhận phản hồi hết hiệu lực.
 - Đã kiểm chứng: regression test bao phủ câu “Anh đã hoàn thành Navi” khớp hai mục, markup Telegram scoped và việc chỉ item được chọn nhận check-in.
+
+## 2026-09-09 20:40 — Daily Loop theo mọi mục kế hoạch
+
+- Đã làm: `/today`, `/week status` và review tuần hiển thị toàn bộ mục tiêu, cam kết và thói quen, kèm trạng thái `đã/chưa hoàn thành` hoặc tiến độ số lượng.
+- Nhắc tối: Cron giờ liệt kê mọi mục chưa đạt, thay vì chỉ nhận biết apply và chạy bộ. Một mục tiêu one-off như public GitHub hay thói quen đọc sách cũng được nhắc khi còn thiếu.
+- Đã kiểm chứng: test bao phủ dashboard, reminder và Sunday review với mục tiêu one-off, cam kết số lượng và hai thói quen; các test D1/Worker đều đạt.

@@ -148,8 +148,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await enqueueWeeklyProgressReminder(db,now+5*60_000)).toBe(false);
     const sent=await replies();
     expect(sent).toHaveLength(1);
-    expect(sent[0]).toContain('Apply 0/5');
-    expect(sent[0]).toContain('Chạy bộ 0/3');
+    expect(sent[0]).toContain('Apply 5 jobs 0/5');
+    expect(sent[0]).toContain('Chạy bộ 3 buổi 0/3');
     expect(await db.prepare("SELECT delivery_started_at,delivery_finished_at,delivery_status FROM job_metrics WHERE job_id=(SELECT job_id FROM weekly_reminders)").first())
       .toMatchObject({delivery_status:'sent'});
   });
@@ -163,6 +163,19 @@ describe('task conversation on real D1 bindings',()=>{
     let markup: unknown;
     await deliverNext(db,async (_chat,_text,buttons)=>{markup=buttons;return {kind:'sent',messageId:1};});
     expect(markup).toEqual({inline_keyboard:[[{text:'Đã làm',callback_data:'_navi:task:done:T2'},{text:'Dời 1 ngày',callback_data:'_navi:task:defer:T2'}],[{text:'Bỏ nhắc',callback_data:'_navi:task:clear:T2'}]]});
+  });
+  it('shows every planned item in today, reminder, and weekly review',async()=>{
+    const now=Date.now(), reminder=Date.UTC(2026,8,9,13);
+    await accept(db,update(1,'/start secret'),true,now);await processNext(db,now);await replies();
+    await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at)
+      VALUES('2026-09-07','123','Public Navi lên GitHub','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách 2 buổi',?)`).bind(now).run();
+    await receive(update(2,'/today'));await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('Public Navi lên GitHub — chưa hoàn thành');
+    expect(await enqueueWeeklyProgressReminder(db,reminder)).toBe(true);
+    expect((await replies()).at(-1)).toContain('Đọc sách 2 buổi 0/2');
+    const sunday=Date.UTC(2026,8,13,12);
+    expect(await enqueueWeeklyReview(db,sunday)).toBe(true);
+    expect((await replies()).at(-1)).toContain('Public Navi lên GitHub — chưa hoàn thành');
   });
   it('queues one daily briefing and one Sunday review',async()=>{
     const morning=Date.UTC(2026,8,10,1), sunday=Date.UTC(2026,8,13,12);

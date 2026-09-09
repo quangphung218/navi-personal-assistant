@@ -111,8 +111,8 @@ function checkInCandidates(items: PlanItem[], text: string): PlanItem[] {
     .map(match => match.item);
 }
 
-function formatPlanItems(items: PlanItem[]): string {
-  const visible = items.filter(item => item.metric === 'completion' || item.completed > 0);
+function formatPlanItems(items: PlanItem[], showAll = false): string {
+  const visible = showAll ? items : items.filter(item => item.metric === 'completion' || item.completed > 0);
   if (!visible.length) return '';
   return `\n\nKế hoạch đang theo dõi:\n${visible.map(item => {
     const progress = item.metric === 'count' ? `${item.completed}/${item.target_count}` : item.status === 'completed' ? 'đã hoàn thành' : 'chưa hoàn thành';
@@ -212,8 +212,8 @@ async function todaySummary(db: D1Database, chatId: string, now: number): Promis
     .bind(6-due.length).all<Task>()).results : [];
   const taskLines = [...due,...unscheduled].map(task => `• ${task.id}: ${task.title}${task.due_at ? ` — ${formatLocalTime(task.due_at)}` : ''}`);
   if (!plan) return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}\n\nAnh nhắn /week để lập kế hoạch tuần.`;
-  const counts = progressCounts(await ensurePlanItems(db, plan, now));
-  return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${formatProgress(plan, counts.applications, counts.runs)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}`;
+  const items = await ensurePlanItems(db, plan, now), counts = progressCounts(items);
+  return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}`;
 }
 
 const AI_RESERVATION_MICROS = 20_000;
@@ -318,7 +318,9 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       } else {
         const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(currentWeek, job.chat_id).first<WeeklyPlan>();
         const open = await tasks(db);
-        result = `${plan ? `${formatProgress(plan, (await db.prepare("SELECT COUNT(*) AS count FROM weekly_progress_events WHERE week_start=? AND kind='job_application'").bind(currentWeek).first<{count:number}>())?.count ?? 0, (await db.prepare("SELECT COUNT(*) AS count FROM weekly_progress_events WHERE week_start=? AND kind='run'").bind(currentWeek).first<{count:number}>())?.count ?? 0)}\n\n` : ''}Review tuần:\n${open.length ? `Task đang mở:\n${open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n')}\n\nChuyển một task: /review carry T...` : 'Không còn task mở.'}`;
+        const items = plan ? await ensurePlanItems(db,plan,now) : [];
+        const counts = progressCounts(items);
+        result = `${plan ? `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\n` : ''}Review tuần:\n${open.length ? `Task đang mở:\n${open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n')}\n\nChuyển một task: /review carry T...` : 'Không còn task mở.'}`;
       }
     } else if (command.kind === 'reminders') {
       const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(job.chat_id).first<ReminderPreference>();
@@ -433,7 +435,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           }
         } else if (command.kind === 'progressList') {
           const checkins = (await db.prepare(`SELECT id,note FROM weekly_checkins WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<{id:number;note:string}>()).results;
-          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items)}\n\n${formatCheckIns(checkins)}`;
+          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true)}\n\n${formatCheckIns(checkins)}`;
         } else if (command.kind === 'progressChange') {
           const pendingChange = await db.prepare("SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending' LIMIT 1")
             .bind(job.chat_id).first<ProgressChange>();
@@ -462,7 +464,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
               replyMarkup = confirmationButtons(`progress:${event.id}`);
             }
           }
-        } else result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items)}`;
+        } else result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true)}`;
       }
     } else if (command.kind === 'add') {
       const id = `T${job.update_id}`;
@@ -642,18 +644,12 @@ export async function enqueueWeeklyProgressReminder(db: D1Database, now = Date.n
   const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(plan.chat_id).first<ReminderPreference>();
   const hour = preference?.delivery_hour ?? 20;
   if ((preference?.weekly_progress_enabled ?? 1) !== 1 || localHour(now) !== hour) return false;
-  const counts = progressCounts(await ensurePlanItems(db, plan, now));
-  const applications = counts.applications, runs = counts.runs;
-  const applicationTarget = targetFrom(plan.commitment);
-  const runHabit = [plan.habit1, plan.habit2].find(value => /chạy|run/iu.test(value));
-  const runTarget = runHabit ? targetFrom(runHabit) : undefined;
-  const pending = [
-    applicationTarget && applications < applicationTarget ? `Apply ${applications}/${applicationTarget}` : undefined,
-    runTarget && runs < runTarget ? `Chạy bộ ${runs}/${runTarget}` : undefined,
-  ].filter((value): value is string => Boolean(value));
+  const items = await ensurePlanItems(db, plan, now);
+  const pending = items.filter(item => item.metric === 'completion' ? item.status !== 'completed' : item.completed < (item.target_count ?? 0))
+    .map(item => `${item.title} ${item.metric === 'completion' ? '— chưa hoàn thành' : `${item.completed}/${item.target_count}`}`);
   if (!pending.length) return false;
   const updateId = -Number(date.replaceAll('-',''));
-  const text = `Nhắc tiến độ hôm nay (${date.slice(8,10)}/${date.slice(5,7)}): ${pending.join(' · ')}.\n\nAnh cập nhật khi hoàn thành, hoặc dùng /reminders off để tắt nhắc.`;
+  const text = `Nhắc tiến độ hôm nay (${date.slice(8,10)}/${date.slice(5,7)}):\n${pending.map(item=>`• ${item}`).join('\n')}\n\nAnh cập nhật khi hoàn thành, hoặc dùng /reminders off để tắt nhắc.`;
   const results = await db.batch([
     db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)
       SELECT ?,owner.user_id,owner.chat_id,?,?, 'done', ? FROM owner
@@ -710,8 +706,8 @@ export async function enqueueWeeklyReview(db: D1Database, now = Date.now()): Pro
     .bind(weekStart(now)).first<WeeklyPlan>();
   if (!plan) return false;
   const open = await tasks(db);
-  const counts = progressCounts(await ensurePlanItems(db, plan, now));
-  const text = `${formatProgress(plan, counts.applications, counts.runs)}\n\nReview tuần:\n${open.length ? open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n') : 'Không còn task mở.'}\n\nChọn task cần giữ: /review carry T...`;
+  const items = await ensurePlanItems(db, plan, now), counts = progressCounts(items);
+  const text = `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\nReview tuần:\n${open.length ? open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n') : 'Không còn task mở.'}\n\nChọn task cần giữ: /review carry T...`;
   const updateId = -(4_000_000_000 + Number(plan.week_start.replaceAll('-','')));
   const results = await db.batch([
     db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)

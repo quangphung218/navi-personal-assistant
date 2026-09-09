@@ -13,11 +13,13 @@ import dailyLoopMigration from '../migrations/0010_daily_execution_loop.sql?raw'
 import genericCheckinsMigration from '../migrations/0013_generic_plan_checkins.sql?raw';
 import checkinCorrectionsMigration from '../migrations/0014_checkin_corrections.sql?raw';
 import checkinSelectionMigration from '../migrations/0015_checkin_selection.sql?raw';
+import checkinOutcomesMigration from '../migrations/0016_checkin_outcomes.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
+import { pilotConversationCorpus } from './fixtures/pilot-conversation-corpus';
 const db = env.DB;
 function update(id: number, text: string, user=123): TelegramUpdate {
   return { update_id:id, message:{from:{id:user,is_bot:false},chat:{id:user,type:'private'},text} };
@@ -34,8 +36,8 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -44,6 +46,9 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/progress')).toEqual({kind:'progressList'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
+  });
+  it('keeps the pilot conversation corpus classified as intended',()=>{
+    for (const sample of pilotConversationCorpus) expect(parseCommand(sample.text).kind).toBe(sample.kind);
   });
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
     await link(); await receive(update(2,'thêm task viết proposal')); await processNext(db); await replies();
@@ -78,6 +83,7 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(8,'Anh đã public Navi lên GitHub')); await processNext(db);
     expect(await db.prepare('SELECT quantity,note FROM weekly_checkins').first()).toMatchObject({quantity:1,note:'Anh đã public Navi lên GitHub'});
     expect(await db.prepare("SELECT status FROM weekly_plan_items WHERE kind='goal'").first()).toMatchObject({status:'completed'});
+    expect(await db.prepare('SELECT outcome FROM checkin_outcomes WHERE source_update=8').first()).toMatchObject({outcome:'recorded'});
     expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Public Navi lên GitHub”');
     await receive(update(9,'Anh đã hoàn thành việc đó')); await processNext(db);
     expect(await db.prepare('SELECT COUNT(*) AS count FROM weekly_checkins').first()).toMatchObject({count:1});
@@ -93,6 +99,7 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(9,'_navi:checkin:select:8:2')); await processNext(db);
     expect(await db.prepare('SELECT plan_item_id,note FROM weekly_checkins').first()).toMatchObject({plan_item_id:2,note:'Anh đã hoàn thành Navi'});
     expect(await db.prepare('SELECT status,selected_item_id FROM checkin_selection_requests WHERE source_update=8').first()).toMatchObject({status:'selected',selected_item_id:2});
+    expect(await db.prepare('SELECT outcome FROM checkin_outcomes WHERE source_update=8').first()).toMatchObject({outcome:'selected'});
   });
   it('records weekly applications and one run per local day without duplicates',async()=>{
     await link();

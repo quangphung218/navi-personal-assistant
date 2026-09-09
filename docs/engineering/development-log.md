@@ -198,3 +198,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: `/today`, `/week status` và review tuần hiển thị toàn bộ mục tiêu, cam kết và thói quen, kèm trạng thái `đã/chưa hoàn thành` hoặc tiến độ số lượng.
 - Nhắc tối: Cron giờ liệt kê mọi mục chưa đạt, thay vì chỉ nhận biết apply và chạy bộ. Một mục tiêu one-off như public GitHub hay thói quen đọc sách cũng được nhắc khi còn thiếu.
 - Đã kiểm chứng: test bao phủ dashboard, reminder và Sunday review với mục tiêu one-off, cam kết số lượng và hai thói quen; các test D1/Worker đều đạt.
+
+## 2026-09-09 20:50 — Pilot corpus và telemetry check-in
+
+- Đã làm: thêm corpus 20 câu tiếng Việt cho task, kế hoạch, check-in, câu mơ hồ, đọc trạng thái và câu không được tạo dữ liệu. Test cố định parser với kết quả kỳ vọng của từng câu.
+- Telemetry: `checkin_outcomes` chỉ lưu chat ID, update ID, nhãn outcome và thời điểm. Bốn outcome là `recorded`, `ambiguous`, `unmatched`, `selected`; không lưu lại nội dung tin nhắn ngoài lịch sử hội thoại đã có.
+- Đã kiểm chứng: test xác nhận check-in rõ ràng có `recorded`, lựa chọn inline chuyển `ambiguous` thành `selected`, cùng toàn bộ corpus và luồng D1/Worker.

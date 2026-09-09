@@ -342,11 +342,17 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       else {
         const items = await ensurePlanItems(db, plan, now);
         const candidates = checkInCandidates(items, command.text);
-        if (!candidates.length) result = `Em chưa nối được cập nhật này với một mục trong kế hoạch tuần. Anh nói rõ tên mục tiêu hoặc task giúp em nhé.\n\n${formatPlanItems(items)}`;
+        if (!candidates.length) {
+          statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
+            SELECT ?,?,'unmatched',? WHERE ${guard}`).bind(job.chat_id,job.update_id,now,...args()));
+          result = `Em chưa nối được cập nhật này với một mục trong kế hoạch tuần. Anh nói rõ tên mục tiêu hoặc task giúp em nhé.\n\n${formatPlanItems(items)}`;
+        }
         else if (candidates.length > 1) {
           const choices = candidates.slice(0,3);
           statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_selection_requests(chat_id,week_start,source_update,text,candidate_item_ids,created_at)
             SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(job.chat_id,currentWeek,job.update_id,command.text,JSON.stringify(choices.map(item=>item.id)),now,...args()));
+          statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
+            SELECT ?,?,'ambiguous',? WHERE ${guard}`).bind(job.chat_id,job.update_id,now,...args()));
           result = `Em thấy cập nhật này có thể thuộc vài mục. Anh chọn đúng mục để em ghi nhé:\n${choices.map(item=>`• ${item.title}`).join('\n')}`;
           replyMarkup = checkInSelectionButtons(job.update_id,choices);
         }
@@ -358,6 +364,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           else {
             statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
               SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek,item.id,quantity,command.text,normalize(command.text),job.update_id,now,...args()));
+            statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
+              SELECT ?,?,'recorded',? WHERE ${guard}`).bind(job.chat_id,job.update_id,now,...args()));
             const completed = item.completed + quantity;
             if (item.metric === 'completion' || (item.target_count !== null && completed >= item.target_count)) statements.push(db.prepare(`UPDATE weekly_plan_items SET status='completed' WHERE id=? AND ${guard}`).bind(item.id,...args()));
             const progress = item.metric === 'count' ? `${completed}/${item.target_count}` : 'đã hoàn thành';
@@ -382,6 +390,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         else {
           statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
             SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(selection.week_start,item.id,quantity,selection.text,normalize(selection.text),selection.source_update,now,...args()));
+          statements.push(db.prepare(`UPDATE checkin_outcomes SET outcome='selected' WHERE chat_id=? AND source_update=? AND outcome='ambiguous' AND ${guard}`)
+            .bind(job.chat_id,selection.source_update,...args()));
           statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='selected',selected_item_id=?,decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
             .bind(item.id,now,selection.id,...args()));
           const completed = item.completed + quantity;

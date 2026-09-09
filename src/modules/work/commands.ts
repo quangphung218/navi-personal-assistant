@@ -1,6 +1,6 @@
 export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference: string }
   | { kind: 'list'; includeDone: boolean } | { kind: 'confirm' } | { kind: 'reject' }
-  | { kind: 'week' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
+  | { kind: 'week' } | { kind: 'status' } | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
 export function parseCommand(text: string): Command {
@@ -14,6 +14,7 @@ export function parseCommand(text: string): Command {
   if (done) return { kind: 'done', reference: done[1]!.trim() };
   if (/^\/list(?:@\w+)?\s+all$/iu.test(value)) return { kind: 'list', includeDone: true };
   if (/^(?:\/list(?:@\w+)?|anh còn việc gì\??|còn việc gì\??|danh sách(?: công việc)?|xem công việc)$/iu.test(value)) return { kind: 'list', includeDone: false };
+  if (/^(?:em đã thêm task chưa|anh đã thêm task chưa|task đó đã được thêm chưa|trạng thái task)$/iu.test(value)) return { kind: 'status' };
   if (/^\/(?:start|help)(?:@\w+)?$/iu.test(value)) return { kind: 'help' };
   if (/^(?:\/week|\/tuan|lập kế hoạch tuần|kế hoạch tuần)(?:@\w+)?$/iu.test(value)) return { kind: 'week' };
   if (/^(?:đúng|đúng rồi|ok|okay|đồng ý|xác nhận|yes)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'confirm' };

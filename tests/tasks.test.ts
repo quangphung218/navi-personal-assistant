@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import migration from '../migrations/0001_tasks.sql?raw';
 import approvalsMigration from '../migrations/0003_approvals.sql?raw';
 import weeklyMigration from '../migrations/0004_weekly_plans.sql?raw';
+import contextMigration from '../migrations/0005_conversation_context.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -24,10 +25,19 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
+  it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
+    await link(); await receive(update(2,'thêm task viết proposal')); await processNext(db); await replies();
+    await receive(update(3,'em đã thêm task chưa')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('đang chờ anh xác nhận');
+    await receive(update(4,'đúng')); await processNext(db); await replies();
+    await receive(update(5,'em đã thêm task chưa')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('Task gần nhất đã được lưu');
+    expect((await db.prepare('SELECT COUNT(*) AS count FROM conversation_messages').first<{count:number}>())?.count).toBeGreaterThan(4);
+  });
   it('guides a weekly plan and saves only after confirmation',async()=>{
     await link();
     for(const [id,text] of [[2,'/week'],[3,'Ship Navi MVP'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách 2 buổi']] as const){await receive(update(id,text));await processNext(db);}

@@ -18,6 +18,9 @@ export async function accept(db: D1Database, update: TelegramUpdate, bootstrap: 
   statements.push(db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at)
     SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
     .bind(update.update_id, userId, chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, now, userId, chatId));
+  statements.push(db.prepare(`INSERT OR IGNORE INTO conversation_messages(chat_id,direction,text,update_id,created_at)
+    SELECT ?, 'inbound', ?, ?, ? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
+    .bind(chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, update.update_id, now, userId, chatId));
   const results = await db.batch(statements);
   return (results.at(-1)?.meta.changes ?? 0) > 0;
 }
@@ -49,6 +52,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const args = () => [token, Date.now(), job.id];
     const statements: D1PreparedStatement[] = [];
     const command = parseCommand(job.text);
+    const recent = (await db.prepare("SELECT direction,text FROM conversation_messages WHERE chat_id=? ORDER BY created_at DESC,id DESC LIMIT 12").bind(job.chat_id).all<{direction:'inbound'|'outbound';text:string}>()).results.reverse()
+      .map(m => `${m.direction === 'inbound' ? 'Anh' : 'Navi'}: ${m.text.slice(0, 500)}`).join('\n');
     let result: string;
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
@@ -89,6 +94,10 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)
         .bind(id, command.title, normalize(command.title), job.update_id, now, ...args()));
       result = `Đã thêm ${id}: ${command.title}\nKhi xong, anh nhắn /done ${id}.`;
+    } else if (command.kind === 'status') {
+      const pendingApproval = await db.prepare("SELECT title FROM approval_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(job.chat_id).first<{title:string}>();
+      const pendingTask = await db.prepare("SELECT id,title FROM tasks WHERE status='open' ORDER BY created_at DESC LIMIT 1").bind().first<{id:string;title:string}>();
+      result = pendingApproval ? `Em đang chờ anh xác nhận task: ${pendingApproval.title}` : pendingTask ? `Task gần nhất đã được lưu: ${pendingTask.id} — ${pendingTask.title}` : 'Hiện chưa có task nào được lưu.';
     } else if (command.kind === 'list') {
       const list = await tasks(db, command.includeDone);
       result = list.length ? list.slice(0, 20).map(t => `${t.status === 'done' ? '✓' : '○'} ${t.id}: ${t.title.slice(0, 140)}`).join('\n')
@@ -128,10 +137,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       statements.push(db.prepare(`INSERT INTO approval_requests(chat_id,source_update,title,created_at) SELECT ?,?,?,? WHERE ${guard}`).bind(job.chat_id, job.update_id, title, now, ...args()));
       result = `Em hiểu là anh muốn thêm task: “${title}”.\nAnh trả lời “đúng” để xác nhận, hoặc “hủy” để bỏ qua.`;
     }
-    else if (assistant && await reserveAi(db, now)) result = await assistant(job.text);
+    else if (assistant && await reserveAi(db, now)) result = await assistant(job.text, recent);
     else result = assistant ? 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /help để xem các lệnh chắc chắn.' : 'Em chưa hiểu chắc yêu cầu này.\n' + help;
     // Lease serializes task writers; job result and outbox commit with the task change.
     statements.push(db.prepare(`INSERT INTO deliveries(job_id,chat_id,text) SELECT ?,?,? WHERE ${guard}`).bind(job.id, job.chat_id, result, ...args()));
+    statements.push(db.prepare(`INSERT INTO conversation_messages(chat_id,direction,text,created_at) SELECT ?,'outbound',?,? WHERE ${guard}`).bind(job.chat_id, result, now, ...args()));
     statements.push(db.prepare(`UPDATE jobs SET status=?,result=? WHERE id=? AND ${guard}`)
       .bind(job.attempts >= 3 ? 'failed' : 'done', result, job.id, ...args()));
     const completed = await db.batch(statements);

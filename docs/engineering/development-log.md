@@ -60,3 +60,12 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: 19 test runtime D1/Workers và typecheck qua.
 - Chưa làm / giới hạn: chưa có nhắc lịch, tracking occurrence hoặc tự tính tiến độ 5 job/3 buổi chạy.
 - Bước tiếp theo: thêm tiêu chí định lượng và nhắc tiến độ cho các cam kết đã lưu.
+
+## 2026-09-09 10:55 — Conversation context v1
+
+- Bối cảnh: tin nhắn tự nhiên trước đó chưa được nối thành một cuộc hội thoại có ngữ cảnh.
+- Đã làm: thêm `conversation_messages` trong `migrations/0005_conversation_context.sql`; lưu 12 tin gần nhất; truyền context ngắn cho OpenRouter; thêm nhận diện câu hỏi trạng thái task.
+- Quyết định: chỉ giữ context ngắn hạn phục vụ cuộc trò chuyện hiện tại, không coi toàn bộ lịch sử chat là bộ nhớ dài hạn.
+- Đã kiểm chứng: 20 test runtime D1/Workers, typecheck qua; kiểm tra được trạng thái pending approval và saved task.
+- Chưa làm / giới hạn: chưa có tham chiếu “việc đó” theo reply/thread, chưa có memory claims hoặc tóm tắt hội thoại dài.
+- Bước tiếp theo: thêm resolver cho task/approval đang được nhắc đến và bộ test từ các câu hội thoại thực tế.

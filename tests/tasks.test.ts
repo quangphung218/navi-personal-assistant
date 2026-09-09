@@ -7,6 +7,7 @@ import weeklyMigration from '../migrations/0004_weekly_plans.sql?raw';
 import contextMigration from '../migrations/0005_conversation_context.sql?raw';
 import progressMigration from '../migrations/0006_weekly_progress.sql?raw';
 import remindersMigration from '../migrations/0007_reminders_and_metrics.sql?raw';
+import correctionsMigration from '../migrations/0008_progress_corrections.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueWeeklyProgressReminder, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -28,14 +29,14 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
     expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','progress','add','list','done','reminders','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
-    expect(parseCommand('/progress')).toEqual({kind:'weekStatus'});
+    expect(parseCommand('/progress')).toEqual({kind:'progressList'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
   });
   it('keeps recent conversation context and reports pending versus saved tasks',async()=>{
@@ -86,6 +87,23 @@ describe('task conversation on real D1 bindings',()=>{
     const events=await db.prepare("SELECT kind,label FROM weekly_progress_events WHERE kind='run'").all<{kind:string;label:string}>();
     expect(aiCalls).toBe(0);
     expect(events.results).toEqual([{kind:'run',label:'2026-09-07'}]);
+  });
+  it('lists, renames and deletes progress only after confirmation',async()=>{
+    await link();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng'],[8,'Anh đã apply job Backend Developer']] as const){await receive(update(id,text));await processNext(db);}
+    await receive(update(9,'/progress'));await processNext(db);
+    expect((await replies()).at(-1)).toContain('P1 · Apply — Backend Developer');
+    await receive(update(10,'/progress edit P1 Senior Backend Developer'));await processNext(db);
+    expect(await db.prepare('SELECT label FROM weekly_progress_events WHERE id=1').first()).toMatchObject({label:'Backend Developer'});
+    expect((await replies()).at(-1)).toContain('trả lời “đúng”');
+    await receive(update(11,'đúng'));await processNext(db);await replies();
+    expect(await db.prepare('SELECT label FROM weekly_progress_events WHERE id=1').first()).toMatchObject({label:'Senior Backend Developer'});
+    await receive(update(12,'/progress delete P1'));await processNext(db);await replies();
+    await receive(update(13,'hủy'));await processNext(db);await replies();
+    expect(await db.prepare('SELECT id FROM weekly_progress_events WHERE id=1').first()).toMatchObject({id:1});
+    await receive(update(14,'/progress delete P1'));await processNext(db);await replies();
+    await receive(update(15,'đúng em'));await processNext(db);
+    expect(await db.prepare('SELECT id FROM weekly_progress_events WHERE id=1').first()).toBeNull();
   });
   it('queues one evening reminder for incomplete weekly progress and records delivery timing',async()=>{
     const now=Date.UTC(2026,8,9,13);

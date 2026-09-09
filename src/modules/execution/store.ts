@@ -8,6 +8,8 @@ type Approval = { id: number; source_update: number; title: string; status: 'pen
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
 type WeeklyPlan = { week_start: string; chat_id: string; goal: string; commitment: string; habit1: string; habit2: string };
 type ReminderPreference = { weekly_progress_enabled: number; delivery_hour: number };
+type ProgressEvent = { id: number; kind: 'job_application'|'run'; label: string; normalized_label: string };
+type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename'; new_label: string|null };
 
 function localDate(now: number): string {
   return new Date(now + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -49,6 +51,16 @@ function formatProgress(plan: WeeklyPlan, applications: number, runs: number): s
   const runTarget = runHabit ? targetFrom(runHabit) : undefined;
   const ratio = (count: number, target?: number) => target ? `${count}/${target}` : `${count} lần đã ghi`;
   return `Tiến độ tuần bắt đầu ${plan.week_start}:\n• Mục tiêu: ${plan.goal}\n• Cam kết: ${plan.commitment}\n• Apply: ${ratio(applications, applicationTarget)}\n• Chạy bộ: ${ratio(runs, runTarget)}\n\nCác kết quả được ghi theo xác nhận của anh.`;
+}
+
+function formatProgressEvents(events: ProgressEvent[]): string {
+  if (!events.length) return 'Chưa có lượt nào được ghi trong tuần này.';
+  const entry = (event: ProgressEvent) => event.kind === 'job_application'
+    ? `P${event.id} · Apply — ${event.label.slice(0, 120)}`
+    : `P${event.id} · Chạy bộ — ${event.label.slice(8,10)}/${event.label.slice(5,7)}`;
+  return `Các lượt đã ghi:\n${events.slice(0,20).map(event => `• ${entry(event)}`).join('\n')}`
+    + (events.length > 20 ? '\nĐang hiển thị 20 lượt gần nhất.' : '')
+    + '\n\nSửa apply: /progress edit P... Tên mới\nXoá lượt: /progress delete P...';
 }
 export async function ownerFor(db: D1Database) {
   return db.prepare('SELECT user_id,chat_id FROM owner WHERE id=1').first<{ user_id: string; chat_id: string }>();
@@ -104,7 +116,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'reminders' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'reminders' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm') {
@@ -146,7 +158,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           .bind(job.chat_id, command.enabled ? 1 : 0, now, ...args()));
         result = command.enabled ? 'Đã bật nhắc tiến độ tuần lúc 20:00 mỗi tối (giờ Việt Nam).' : 'Đã tắt nhắc tiến độ tuần. Khi cần bật lại, anh nhắn /reminders on.';
       }
-    } else if (command.kind === 'weekStatus' || command.kind === 'progress') {
+    } else if (command.kind === 'weekStatus' || command.kind === 'progressList' || command.kind === 'progress' || command.kind === 'progressChange') {
       const currentWeek = weekStart(now);
       const plan = await db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
         .bind(currentWeek, job.chat_id).first<WeeklyPlan>();
@@ -175,6 +187,36 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
                 SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(currentWeek, command.activity, label, normalized, job.update_id, now, ...args()));
               if (command.activity === 'job_application') applications += 1; else runs += 1;
               result = `${command.activity === 'job_application' ? `Đã ghi nhận anh apply: ${label}.` : `Đã ghi nhận buổi chạy ngày ${label}.`}\n\n${formatProgress(plan, applications, runs)}`;
+            }
+          }
+        } else if (command.kind === 'progressList') {
+          const events = (await db.prepare(`SELECT id,kind,label,normalized_label FROM weekly_progress_events
+            WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<ProgressEvent>()).results;
+          result = `${formatProgress(plan, applications, runs)}\n\n${formatProgressEvents(events)}`;
+        } else if (command.kind === 'progressChange') {
+          const pendingChange = await db.prepare("SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending' LIMIT 1")
+            .bind(job.chat_id).first<ProgressChange>();
+          if (pendingChange) result = 'Em đang chờ anh xác nhận một thay đổi tiến độ trước đó. Anh trả lời “đúng” hoặc “hủy” trước nhé.';
+          else {
+            const eventId = Number(command.reference.slice(1));
+            const event = await db.prepare(`SELECT e.id,e.kind,e.label,e.normalized_label FROM weekly_progress_events e
+              JOIN weekly_plans p ON p.week_start=e.week_start WHERE e.id=? AND e.week_start=? AND p.chat_id=? AND p.status='active'`)
+              .bind(eventId, currentWeek, job.chat_id).first<ProgressEvent>();
+            if (!event) result = `Em không thấy ${command.reference} trong tiến độ tuần này. Anh nhắn /progress để xem mã.`;
+            else if (command.action === 'rename' && event.kind !== 'job_application') result = `Chỉ có thể sửa tên lượt apply. ${command.reference} là một buổi chạy; nếu ghi nhầm anh có thể xoá bằng /progress delete ${command.reference}.`;
+            else if (command.action === 'rename') {
+              const duplicate = await db.prepare('SELECT id FROM weekly_progress_events WHERE week_start=? AND kind=? AND normalized_label=? AND id<>?')
+                .bind(currentWeek, event.kind, normalize(command.detail!), event.id).first<{id:number}>();
+              if (duplicate) result = `Tên “${command.detail}” đã có trong tuần này nên em không thể đổi thành bản trùng.`;
+              else {
+                statements.push(db.prepare(`INSERT INTO progress_change_requests(chat_id,event_id,action,new_label,created_at)
+                  SELECT ?,?,?,?,? WHERE ${guard}`).bind(job.chat_id, event.id, 'rename', command.detail!, now, ...args()));
+                result = `Anh muốn đổi ${command.reference} từ “${event.label}” thành “${command.detail}”. Anh trả lời “đúng” để xác nhận, hoặc “hủy” để giữ nguyên.`;
+              }
+            } else {
+              statements.push(db.prepare(`INSERT INTO progress_change_requests(chat_id,event_id,action,created_at)
+                SELECT ?,?,?,? WHERE ${guard}`).bind(job.chat_id, event.id, 'delete', now, ...args()));
+              result = `Anh muốn xoá ${command.reference}: “${event.label}”. Anh trả lời “đúng” để xác nhận, hoặc “hủy” để giữ lại.`;
             }
           }
         } else result = formatProgress(plan, applications, runs);
@@ -214,6 +256,41 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       }
     } else if (command.kind === 'confirm' || command.kind === 'reject') {
+      const progressChange = await db.prepare("SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1")
+        .bind(job.chat_id).first<ProgressChange>();
+      if (progressChange) {
+        const event = await db.prepare(`SELECT e.id,e.kind,e.label,e.normalized_label FROM weekly_progress_events e
+          JOIN weekly_plans p ON p.week_start=e.week_start WHERE e.id=? AND p.chat_id=? AND p.status='active'`).bind(progressChange.event_id, job.chat_id).first<ProgressEvent>();
+        if (command.kind === 'reject') {
+          statements.push(db.prepare(`UPDATE progress_change_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
+            .bind(now, progressChange.id, ...args()));
+          result = 'Đã giữ nguyên tiến độ.';
+        } else if (!event) {
+          statements.push(db.prepare(`UPDATE progress_change_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
+            .bind(now, progressChange.id, ...args()));
+          result = 'Lượt tiến độ này không còn tồn tại nên em không thay đổi thêm.';
+        } else if (progressChange.action === 'delete') {
+          statements.push(db.prepare(`DELETE FROM weekly_progress_events WHERE id=? AND ${guard}`).bind(event.id, ...args()));
+          statements.push(db.prepare(`UPDATE progress_change_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
+            .bind(now, progressChange.id, ...args()));
+          result = `Đã xoá P${event.id}: “${event.label}”.`;
+        } else {
+          const duplicate = await db.prepare('SELECT id FROM weekly_progress_events WHERE week_start=(SELECT week_start FROM weekly_progress_events WHERE id=?) AND kind=? AND normalized_label=? AND id<>?')
+            .bind(event.id, event.kind, normalize(progressChange.new_label!), event.id).first<{id:number}>();
+          if (duplicate) {
+            statements.push(db.prepare(`UPDATE progress_change_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
+              .bind(now, progressChange.id, ...args()));
+            result = 'Tên mới đã trùng với một lượt apply khác nên em không đổi.';
+          }
+          else {
+            statements.push(db.prepare(`UPDATE weekly_progress_events SET label=?,normalized_label=? WHERE id=? AND ${guard}`)
+              .bind(progressChange.new_label!, normalize(progressChange.new_label!), event.id, ...args()));
+            statements.push(db.prepare(`UPDATE progress_change_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
+              .bind(now, progressChange.id, ...args()));
+            result = `Đã đổi P${event.id} thành “${progressChange.new_label}”.`;
+          }
+        }
+      } else {
       const approval = await db.prepare("SELECT id,source_update,title,status FROM approval_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1")
         .bind(job.chat_id).first<Approval>();
       if (!approval) result = 'Hiện không có đề xuất nào đang chờ xác nhận.';
@@ -225,6 +302,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`).bind(taskId, approval.title, normalize(approval.title), approval.source_update, now, ...args()));
         statements.push(db.prepare(`UPDATE approval_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now, approval.id, ...args()));
         result = `Đã xác nhận và thêm ${taskId}: ${approval.title}\nKhi xong, anh nhắn /done ${taskId}.`;
+      }
       }
     } else if (command.kind === 'help') result = help;
     else if (command.kind === 'thanks') result = 'Dạ, em ở đây. Khi cần thêm việc anh cứ nhắn em nhé.';

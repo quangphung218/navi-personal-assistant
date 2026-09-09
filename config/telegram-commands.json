@@ -1,6 +1,6 @@
 [
   { "command": "week", "description": "Lập kế hoạch tuần" },
-  { "command": "progress", "description": "Xem tiến độ tuần" },
+  { "command": "progress", "description": "Xem tiến độ và lịch sử" },
   { "command": "add", "description": "Thêm task mới" },
   { "command": "list", "description": "Xem task đang mở" },
   { "command": "done", "description": "Hoàn thành task theo mã" },

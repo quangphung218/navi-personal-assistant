@@ -138,3 +138,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: đăng ký menu native gồm tuần, tiến độ, task, nhắc và trợ giúp cho private chat. `/help` được viết lại theo các luồng thực tế thay vì liệt kê kỹ thuật.
 - Quyết định: giữ menu ở 7 lệnh ngắn; thao tác có tham số như `/done T123` và `/reminders off` được đưa vào phần trợ giúp để menu không quá tải.
 - Vận hành: `npm run telegram:menu` đọc token từ `.dev.vars`, gọi Telegram qua HTTPS, kiểm tra danh sách sau khi ghi và không in token hay response thô.
+
+## 2026-09-09 17:15 — Chỉnh sửa tiến độ có xác nhận
+
+- Đã làm: `/progress` trả tiến độ và các lượt đã ghi với mã `P...`; hỗ trợ `/progress edit P... Tên mới` cho lượt apply và `/progress delete P...` cho mọi lượt.
+- Kiểm soát: mọi sửa/xoá tạo một yêu cầu chờ. Chỉ `đúng` mới thay đổi dữ liệu; `hủy` giữ nguyên. Mỗi chat chỉ có một yêu cầu chỉnh tiến độ đang chờ để không xác nhận nhầm.
+- Dữ liệu: thêm `progress_change_requests` làm audit trail cho yêu cầu đã duyệt hoặc từ chối; không lưu lại một occurrence đã xoá như dữ liệu active.
+- Đã kiểm chứng: test D1/Workers bao phủ danh sách, đổi tên, hủy xoá và xoá sau xác nhận.

@@ -244,6 +244,20 @@ describe('task conversation on real D1 bindings',()=>{
     expect(status).toContain('Apply: 1/5');
     expect(status).toContain('Chạy bộ: 1/3');
   });
+  it('keeps legacy running history visible when the current plan no longer has a running habit',async()=>{
+    await link();
+    for(const [id,text] of [[2,'/week'],[3,'Tìm việc'],[4,'Apply 5 job'],[5,'Thiền 5 buổi'],[6,'Nghe tiếng Anh'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db);await replies();}
+    const plan=await db.prepare("SELECT week_start FROM weekly_plans WHERE status='active'").first<{week_start:string}>();
+    await db.batch([
+      db.prepare("INSERT INTO weekly_progress_events(week_start,kind,label,normalized_label,source_update,occurred_at) VALUES(?,'run','2026-09-07','2026-09-07',81,?)").bind(plan!.week_start,Date.now()),
+      db.prepare("INSERT INTO weekly_progress_events(week_start,kind,label,normalized_label,source_update,occurred_at) VALUES(?,'run','2026-09-08','2026-09-08',82,?)").bind(plan!.week_start,Date.now()),
+    ]);
+    await receive(update(9,'/progress')); await processNext(db);
+    const progress=(await replies()).at(-1) ?? '';
+    expect(progress).toContain('Lịch sử đã ghi, chưa gắn với mục kế hoạch hiện tại');
+    expect(progress).toContain('Chạy bộ ngày 07/09');
+    expect(progress).toContain('Chạy bộ ngày 08/09');
+  });
   it('records an explicitly dated run without calling AI',async()=>{
     const now=Date.now();
     await accept(db,update(1,'/start secret'),true,now);await processNext(db,now);

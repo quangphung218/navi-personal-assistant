@@ -245,3 +245,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Nguyên nhân: webhook Telegram pilot chỉ đăng ký update kiểu `message`. Các nút inline như “Xem tiến độ” gửi `callback_query`, nên Telegram không chuyển update đến Worker; D1 không tạo job và chat không có phản hồi.
 - Đã làm: thêm `npm run telegram:webhook`, đọc URL webhook hiện có và cấu hình rõ `message` cùng `callback_query`, giữ webhook secret và không bỏ update đang chờ. Script xác nhận lại cấu hình sau khi ghi.
 - Đã kiểm chứng: regression test gửi callback thật qua ingress → D1 job → Processor/outbox giả lập và nhận nội dung “Tiến độ tuần”. Cần chạy script với secret local để đồng bộ cấu hình Telegram thật.
+
+## 2026-09-10 — Giữ lịch sử tiến độ khi kế hoạch đổi thói quen
+
+- Phát hiện từ pilot: hai lượt chạy bộ ngày 07 và 08/09 vẫn có trong `weekly_progress_events`, không có yêu cầu xoá/sửa, nhưng bị ẩn khi kế hoạch tuần hiện tại không còn mục chạy bộ. Đây là dữ liệu legacy chưa gắn được vào mục kế hoạch mới.
+- Đã làm: `/progress` giờ hiển thị rõ “Lịch sử đã ghi, chưa gắn với mục kế hoạch hiện tại” cho các lượt legacy chưa được materialize thành check-in. Lượt đã gắn không bị hiện lặp lại.
+- Đã kiểm chứng: regression test tạo kế hoạch không có chạy bộ cùng hai lượt chạy legacy, rồi kiểm tra cả hai ngày vẫn xuất hiện trong `/progress`.

@@ -8,7 +8,7 @@ type Approval = { id: number; source_update: number; title: string; status: 'pen
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
 type WeeklyPlan = { week_start: string; chat_id: string; goal: string; commitment: string; habit1: string; habit2: string };
 type ReminderPreference = { weekly_progress_enabled: number; delivery_hour: number };
-type ProgressEvent = { id: number; kind: 'job_application'|'run'; label: string; normalized_label: string };
+type ProgressEvent = { id: number; kind: 'job_application'|'run'; label: string; normalized_label: string; source_update: number };
 type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename'; new_label: string|null };
 type CheckInChange = { id: number; checkin_id: number; action: 'delete'|'rename'; new_note: string|null };
 type CheckInSelection = { id: number; week_start: string; source_update: number; text: string; candidate_item_ids: string; status: 'pending'|'selected'|'rejected'; expires_at: number|null };
@@ -169,9 +169,16 @@ function progressCounts(items: PlanItem[]): { applications: number; runs: number
   return { applications, runs };
 }
 
-function formatCheckIns(checkins: {id:number; note:string}[]): string {
+function formatCheckIns(checkins: {id:number; note:string; source_update?:number}[]): string {
   if (!checkins.length) return 'Chưa có check-in nào trong tuần này.';
   return `Check-in tuần này:\n${checkins.slice(0,20).map(checkin => `• C${checkin.id} · ${checkin.note.slice(0,140)}`).join('\n')}\n\nSửa: /progress edit C... Nội dung mới\nXoá: /progress delete C...`;
+}
+
+function formatUngroupedProgressEvents(events: ProgressEvent[]): string {
+  if (!events.length) return '';
+  return `Lịch sử đã ghi, chưa gắn với mục kế hoạch hiện tại:\n${events.slice(0,20).map(event => event.kind === 'run'
+    ? `• Chạy bộ ngày ${event.label.slice(8,10)}/${event.label.slice(5,7)}`
+    : `• Apply — ${event.label.slice(0,120)}`).join('\n')}`;
 }
 
 function formatProgress(plan: WeeklyPlan, applications: number, runs: number): string {
@@ -544,8 +551,12 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
             }
           }
         } else if (command.kind === 'progressList') {
-          const checkins = (await db.prepare(`SELECT id,note FROM weekly_checkins WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<{id:number;note:string}>()).results;
-          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true)}\n\n${formatCheckIns(checkins)}`;
+          const [checkins, events] = await Promise.all([
+            db.prepare(`SELECT id,note,source_update FROM weekly_checkins WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<{id:number;note:string;source_update:number}>(),
+            db.prepare(`SELECT id,kind,label,normalized_label FROM weekly_progress_events WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<ProgressEvent>(),
+          ]);
+          const ungrouped = events.results.filter(event => !checkins.results.some(checkin => checkin.source_update === event.source_update));
+          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true)}\n\n${formatCheckIns(checkins.results)}${ungrouped.length ? `\n\n${formatUngroupedProgressEvents(ungrouped)}` : ''}`;
         } else if (command.kind === 'progressChange') {
           const pendingChange = await db.prepare("SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending' LIMIT 1")
             .bind(job.chat_id).first<ProgressChange>();

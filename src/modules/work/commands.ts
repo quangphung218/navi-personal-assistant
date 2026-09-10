@@ -11,7 +11,7 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
   | { kind: 'checkIn'; text: string; date?: { day: number; month: number; year?: number } }
   | { kind: 'measurement'; value: number; unit: 'minutes' }
   | { kind: 'cancelMeasurement'; sourceUpdate?: number }
-  | { kind: 'goal'; action: 'show'|'complete'|'reopen'|'attach'|'detach'; taskId?: string }
+  | { kind: 'goal'; action: 'show'|'history'|'complete'|'reopen'|'archive'|'rename'|'attach'|'detach'; taskId?: string; title?:string }
   | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
   | { kind: 'reminders'; enabled?: boolean } | { kind: 'export'; format: 'markdown'|'json' }
   | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'status' }
@@ -90,14 +90,18 @@ export function parseCommand(text: string): Command {
   if (/^(?:\/week(?:@\w+)?\s+status|tiến độ tuần|tuần này thế nào\??)$/iu.test(value)) return { kind: 'weekStatus' };
   if (/^\/(?:week|tuan)(?:@\w+)?\s+(?:continue|tiếp tục)$/iu.test(value)) return {kind:'week',continueGoal:true};
   if (/^(?:\/week|\/tuan|lập kế hoạch tuần|kế hoạch tuần)(?:@\w+)?$/iu.test(value)) return { kind: 'week',continueGoal:false };
-  const goal = value.match(/^\/goal(?:@\w+)?(?:\s+(done|complete|reopen|add|remove)\s*(T\d+)?)?$/iu);
+  const goal = value.match(/^\/goal(?:@\w+)?(?:\s+(done|complete|reopen|archive|history|rename|add|remove)(?:\s+(.*))?)?$/iu);
   if (goal) {
     const action = goal[1]?.toLowerCase();
     if (!action) return {kind:'goal',action:'show'};
     if (/^(?:done|complete)$/.test(action)) return {kind:'goal',action:'complete'};
     if (action === 'reopen') return {kind:'goal',action:'reopen'};
-    if (action === 'add' && goal[2]) return {kind:'goal',action:'attach',taskId:goal[2].toUpperCase()};
-    if (action === 'remove' && goal[2]) return {kind:'goal',action:'detach',taskId:goal[2].toUpperCase()};
+    if (action === 'archive') return {kind:'goal',action:'archive'};
+    if (action === 'history') return {kind:'goal',action:'history'};
+    const argument = goal[2]?.trim();
+    if (action === 'rename' && argument && argument.length <= 180) return {kind:'goal',action:'rename',title:argument};
+    if (action === 'add' && argument && /^T\d+$/iu.test(argument)) return {kind:'goal',action:'attach',taskId:argument.toUpperCase()};
+    if (action === 'remove' && argument && /^T\d+$/iu.test(argument)) return {kind:'goal',action:'detach',taskId:argument.toUpperCase()};
   }
   if (/^(?:\/reminders?(?:@\w+)?\s+(?:on|bật)|bật nhắc(?: tiến độ)?|bật reminder)$/iu.test(value)) return { kind: 'reminders', enabled: true };
   if (/^(?:\/reminders?(?:@\w+)?\s+(?:off|tắt)|tắt nhắc(?: tiến độ)?|tắt reminder)$/iu.test(value)) return { kind: 'reminders', enabled: false };

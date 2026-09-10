@@ -562,19 +562,40 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       }
     } else if (command.kind === 'goal') {
+      if (command.action === 'history') {
+        const history = (await db.prepare(`SELECT g.id,g.title,g.status,COUNT(DISTINCT i.week_start) AS weeks,
+          SUM(CASE WHEN t.status='open' THEN 1 ELSE 0 END) AS open_tasks
+          FROM goals g LEFT JOIN weekly_plan_items i ON i.goal_id=g.id
+          LEFT JOIN tasks t ON t.goal_id=g.id WHERE g.chat_id=?
+          GROUP BY g.id ORDER BY CASE g.status WHEN 'active' THEN 0 WHEN 'completed' THEN 1 ELSE 2 END,g.created_at DESC LIMIT 12`).bind(job.chat_id)
+          .all<{id:number;title:string;status:'active'|'completed'|'archived';weeks:number;open_tasks:number}>()).results;
+        result = history.length ? `Lịch sử mục tiêu\n${history.map(goal=>`• ${goal.title} — ${goal.status === 'active' ? 'đang theo dõi' : goal.status === 'completed' ? 'đã đạt' : 'đã lưu trữ'} · ${goal.weeks} tuần · ${goal.open_tasks ?? 0} task mở`).join('\n')}\n\nDùng /goal để xem mục tiêu tuần này.` : 'Chưa có mục tiêu nào trong lịch sử.';
+      } else {
       const currentWeek = weekStart(now);
       const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
         .bind(currentWeek,job.chat_id).first<WeeklyPlan>();
       if (!plan) result = 'Tuần này chưa có mục tiêu đang theo dõi. Anh nhắn /week để lập kế hoạch nhé.';
       else {
         const goalItem = (await ensurePlanItems(db,plan,now)).find(item=>item.kind==='goal');
-        const goal = goalItem?.goal_id ? await db.prepare('SELECT id,title,status FROM goals WHERE id=? AND chat_id=?').bind(goalItem.goal_id,job.chat_id).first<{id:number;title:string;status:'active'|'completed'|'archived'}>() : undefined;
+        const goal = goalItem?.goal_id ? await db.prepare('SELECT id,title,normalized_title,status FROM goals WHERE id=? AND chat_id=?').bind(goalItem.goal_id,job.chat_id).first<{id:number;title:string;normalized_title:string;status:'active'|'completed'|'archived'}>() : undefined;
         if (!goal || !goalItem) result = 'Em chưa tạo được dữ liệu mục tiêu tuần này. Anh thử lại /goal giúp em.';
-        else if (command.action === 'complete' || command.action === 'reopen') {
+        else if (goal.status === 'archived' && (command.action === 'attach' || command.action === 'detach' || command.action === 'complete' || command.action === 'rename')) result = `Mục tiêu “${goal.title}” đang được lưu trữ. Anh dùng /goal reopen trước khi thay đổi.`;
+        else if (command.action === 'complete' || command.action === 'reopen' || command.action === 'archive') {
           const action = command.action === 'complete' ? 'complete' : 'reopen';
-          result = action === 'complete' ? `Anh muốn đánh dấu mục tiêu “${goal.title}” đã đạt. Task hoàn thành không tự quyết định điều này. Anh bấm nút để xác nhận.`
+          const actionName = command.action === 'archive' ? 'archive' : action;
+          result = actionName === 'complete' ? `Anh muốn đánh dấu mục tiêu “${goal.title}” đã đạt. Task hoàn thành không tự quyết định điều này. Anh bấm nút để xác nhận.`
+            : actionName === 'archive' ? `Anh muốn lưu trữ mục tiêu “${goal.title}”. Task đang mở vẫn được giữ nguyên. Anh bấm nút để xác nhận.`
             : `Anh muốn mở lại mục tiêu “${goal.title}”. Anh bấm nút để xác nhận.`;
-          replyMarkup = confirmationButtons(`goal:${action}:${goal.id}`);
+          replyMarkup = confirmationButtons(`goal:${actionName}:${goal.id}`);
+        } else if (command.action === 'rename') {
+          const nextTitle = command.title!;
+          if (normalize(nextTitle) === goal.normalized_title) result = 'Tên mục tiêu này chưa thay đổi.';
+          else {
+            statements.push(db.prepare(`INSERT INTO goal_rename_requests(chat_id,goal_id,new_title,normalized_new_title,created_at)
+              SELECT ?,?,?,?,? WHERE ${guard}`).bind(job.chat_id,goal.id,nextTitle,normalize(nextTitle),now,...args()));
+            result = `Anh muốn đổi mục tiêu từ “${goal.title}” thành “${nextTitle}”. Lịch sử và task gắn mục tiêu sẽ được giữ nguyên. Anh bấm nút để xác nhận.`;
+            replyMarkup = confirmationButtons(`goalrename:${job.update_id}`);
+          }
         } else if (command.action === 'attach' || command.action === 'detach') {
           const taskCandidates = command.taskId === 'đó'
             ? (await db.prepare("SELECT id,title,status,goal_id FROM tasks WHERE status='open' ORDER BY created_at DESC,id DESC LIMIT 2").all<{id:string;title:string;status:string;goal_id:number|null}>()).results
@@ -600,6 +621,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           for (const task of linked.results.filter(task=>task.status==='open').slice(0,2)) buttons.push([{text:`Bỏ gắn ${task.id}`,callback_data:`_navi:goal:detach:${task.id}`}]);
           replyMarkup = buttons.length ? {inline_keyboard:buttons} : undefined;
         }
+      }
       }
     } else if (command.kind === 'today') {
       result = await todaySummary(db, job.chat_id, now);
@@ -906,15 +928,35 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       }
     } else if (command.kind === 'confirm' || command.kind === 'reject') {
-      const goalTarget = command.target?.match(/^goal:(complete|reopen):(\d+)$/u);
+      const renameTarget = command.target?.match(/^goalrename:(\d+)$/u);
+      if (renameTarget) {
+        const change = await db.prepare(`SELECT id,goal_id,new_title,normalized_new_title FROM goal_rename_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1`)
+          .bind(job.chat_id).first<{id:number;goal_id:number;new_title:string;normalized_new_title:string}>();
+        const goal = change ? await db.prepare('SELECT id,title FROM goals WHERE id=? AND chat_id=?').bind(change.goal_id,job.chat_id).first<{id:number;title:string}>() : undefined;
+        if (!change || !goal) result = 'Đề xuất đổi tên mục tiêu này không còn hiệu lực.';
+        else if (command.kind === 'reject') {
+          statements.push(db.prepare(`UPDATE goal_rename_requests SET status='rejected',decided_at=? WHERE id=? AND ${guard}`).bind(now,change.id,...args()));
+          result = 'Đã giữ nguyên tên mục tiêu.';
+        } else {
+          const duplicate = await db.prepare('SELECT id FROM goals WHERE chat_id=? AND normalized_title=? AND id<>?').bind(job.chat_id,change.normalized_new_title,goal.id).first<{id:number}>();
+          if (duplicate) result = 'Tên mới đã thuộc một mục tiêu khác. Em chưa đổi để không nhập nhầm lịch sử.';
+          else {
+            statements.push(db.prepare(`UPDATE goals SET title=?,normalized_title=? WHERE id=? AND ${guard}`).bind(change.new_title,change.normalized_new_title,goal.id,...args()));
+            statements.push(db.prepare(`UPDATE weekly_plans SET goal=? WHERE chat_id=? AND status='active' AND week_start IN (SELECT week_start FROM weekly_plan_items WHERE goal_id=?) AND ${guard}`).bind(change.new_title,job.chat_id,goal.id,...args()));
+            statements.push(db.prepare(`UPDATE goal_rename_requests SET status='approved',decided_at=? WHERE id=? AND ${guard}`).bind(now,change.id,...args()));
+            result = `Đã đổi mục tiêu từ “${goal.title}” thành “${change.new_title}”. Lịch sử và task gắn mục tiêu được giữ nguyên.`;
+          }
+        }
+      } else {
+      const goalTarget = command.target?.match(/^goal:(complete|reopen|archive):(\d+)$/u);
       if (goalTarget) {
         const goal = await db.prepare('SELECT id,title,status FROM goals WHERE id=? AND chat_id=?').bind(Number(goalTarget[2]),job.chat_id).first<{id:number;title:string;status:string}>();
         if (!goal) result = 'Mục tiêu này không còn tồn tại hoặc không thuộc cuộc trò chuyện này.';
         else if (command.kind === 'reject') result = 'Đã giữ nguyên trạng thái mục tiêu.';
         else {
-          const status = goalTarget[1] === 'complete' ? 'completed' : 'active';
+          const status = goalTarget[1] === 'complete' ? 'completed' : goalTarget[1] === 'archive' ? 'archived' : 'active';
           statements.push(db.prepare(`UPDATE goals SET status=? WHERE id=? AND chat_id=? AND ${guard}`).bind(status,goal.id,job.chat_id,...args()));
-          result = status === 'completed' ? `Đã đánh dấu mục tiêu “${goal.title}” đã đạt.` : `Đã mở lại mục tiêu “${goal.title}”.`;
+          result = status === 'completed' ? `Đã đánh dấu mục tiêu “${goal.title}” đã đạt.` : status === 'archived' ? `Đã lưu trữ mục tiêu “${goal.title}”.` : `Đã mở lại mục tiêu “${goal.title}”.`;
         }
       } else {
       const checkinChange = command.target && !command.target.startsWith('checkin:') ? undefined
@@ -1018,7 +1060,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       }
       }
       }
-    } else if (command.kind === 'help') result = `${help}\n\nMục tiêu\n/goal — xem mục tiêu và task hỗ trợ\n/goal add T123 — gắn task vào mục tiêu\n/goal remove T123 — chuyển task thành việc riêng\n/goal done — đánh dấu mục tiêu đã đạt\n/week continue — tiếp tục mục tiêu tuần trước\n\nAnh cũng có thể nhắn tự nhiên: “mục tiêu này xong rồi”, “task này để tuần sau” hoặc “gắn task này vào mục tiêu”.`;
+      }
+    } else if (command.kind === 'help') result = `${help}\n\nMục tiêu\n/goal — xem mục tiêu và task hỗ trợ\n/goal add T123 — gắn task vào mục tiêu\n/goal remove T123 — chuyển task thành việc riêng\n/goal done — đánh dấu mục tiêu đã đạt\n/goal rename Tên mới — đổi tên, giữ lịch sử\n/goal archive — lưu trữ mục tiêu\n/goal history — xem lịch sử mục tiêu\n/week continue — tiếp tục mục tiêu tuần trước\n\nAnh cũng có thể nhắn tự nhiên: “mục tiêu này xong rồi”, “task này để tuần sau” hoặc “gắn task này vào mục tiêu”.`;
     else if (command.kind === 'thanks') result = 'Dạ, em ở đây. Khi cần thêm việc anh cứ nhắn em nhé.';
     else if (parseNaturalAdd(job.text)) {
       const title = parseNaturalAdd(job.text)!;

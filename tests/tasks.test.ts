@@ -21,6 +21,7 @@ import backfillHabitDatesMigration from '../migrations/0019_backfill_habit_check
 import measurementRequestsMigration from '../migrations/0020_checkin_measurement_requests.sql?raw';
 import latencyMetricsMigration from '../migrations/0021_job_latency_metrics.sql?raw';
 import aiTaskProposalsMigration from '../migrations/0022_ai_task_proposals.sql?raw';
+import goalRenameMigration from '../migrations/0023_goal_rename_requests.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -48,8 +49,8 @@ async function replies() {
 }
 beforeEach(async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200})));
-  for(const table of ['checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['goal_rename_requests','checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';'), ...goalRenameMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -64,6 +65,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
     expect(parseCommand('/goal')).toEqual({kind:'goal',action:'show'});
     expect(parseCommand('/goal add T12')).toEqual({kind:'goal',action:'attach',taskId:'T12'});
+    expect(parseCommand('/goal rename Tìm việc Product')).toEqual({kind:'goal',action:'rename',title:'Tìm việc Product'});
+    expect(parseCommand('/goal history')).toEqual({kind:'goal',action:'history'});
     expect(parseCommand('/week continue')).toEqual({kind:'week',continueGoal:true});
     expect(parseCommand('_navi:review:carry:T12')).toEqual({kind:'review',carry:'T12'});
     expect(parseCommand('Mục tiêu này xong rồi')).toEqual({kind:'goal',action:'complete'});
@@ -552,6 +555,15 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'completed'});
     await accept(db,{...callbackUpdate(14,`_navi:confirm:goal:reopen:${goal!.id}`),message:{from:{id:123,is_bot:false},chat:{id:123,type:'private'},text:`_navi:confirm:goal:reopen:${goal!.id}`}},false); await processNext(db); await replies();
     expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'active'});
+    await accept(db,update(15,'/goal rename Ship Navi v2'),false); await processNext(db); await replies();
+    expect(await db.prepare('SELECT status FROM goal_rename_requests WHERE goal_id=?').bind(goal!.id).first()).toMatchObject({status:'pending'});
+    await accept(db,update(16,'_navi:confirm:goalrename:15'),false); await processNext(db); await replies();
+    expect(await db.prepare('SELECT title,normalized_title FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({title:'Ship Navi v2',normalized_title:'ship navi v2'});
+    await accept(db,update(17,'/goal history'),false); await processNext(db);
+    expect((await replies()).at(-1)).toContain('Ship Navi v2');
+    await accept(db,update(18,'/goal archive'),false); await processNext(db); await replies();
+    await accept(db,update(19,`_navi:confirm:goal:archive:${goal!.id}`),false); await processNext(db); await replies();
+    expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'archived'});
   });
   it('makes an actionable weekly review and carries a chosen task forward',async()=>{
     const now=Date.now();

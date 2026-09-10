@@ -368,3 +368,11 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: đề xuất AI tạo `approval_request`, không tạo task. Tin nhắn nêu rõ task sẽ gắn mục tiêu tuần hay là việc riêng; chỉ callback Xác nhận mới tạo task. Nếu mục tiêu tuần không còn khi xác nhận, đề xuất bị bỏ thay vì tạo task sai phạm vi.
 - Dữ liệu: migration `0022_ai_task_proposals.sql` thêm cờ `goal_scoped` vào approval request và đã áp dụng remote.
 - Đã kiểm chứng: `npm run check` pass với 58 tests, typecheck và Worker build dry-run. Ca mới phủ schema JSON model, không mutation trước xác nhận và task được gắn đúng mục tiêu sau xác nhận.
+
+## 2026-09-10 — Vòng đời mục tiêu
+
+- Đã làm: `/goal rename Tên mới` tạo một yêu cầu xác nhận. Khi được chấp nhận, Navi đổi title/normalized title trên cùng `goal_id` và cập nhật kế hoạch tuần đang active, nên task và lịch sử vẫn thuộc đúng mục tiêu.
+- Đã làm: `/goal archive` lưu trữ mục tiêu sau xác nhận; `/goal reopen` mở lại. Mục tiêu đang archive không nhận thêm task, đổi tên hoặc hoàn tất cho đến khi được mở lại.
+- Đã làm: `/goal history` hiển thị mỗi mục tiêu với trạng thái, số tuần theo dõi và số task mở. Lịch sử không bị ghi đè khi đổi tên.
+- Dữ liệu: migration `0023_goal_rename_requests.sql` thêm hàng chờ đổi tên và đã áp dụng remote.
+- Đã kiểm chứng: `npm run check` pass với 58 tests, typecheck và Worker build dry-run. Ca mới phủ parser, đổi tên có xác nhận, bảo toàn identity, history và archive.

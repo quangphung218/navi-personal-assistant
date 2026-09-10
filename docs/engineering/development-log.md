@@ -318,3 +318,11 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: `/progress` trang đầu dùng bảng tiến độ và lịch sử giới hạn; các trang sau chỉ hiện lịch sử. Nội dung check-in, title task và title mục bị cắt có kiểm soát để giữ delivery trong giới hạn Telegram.
 - Đã deploy Processor version `4a732df1-a7a4-4ec9-a2e1-803ec12f0a04`.
 - Đã kiểm chứng: `npm run check` pass với 49 tests, typecheck và Worker build dry-run. Ca mới phủ qua nửa đêm, hủy/hết hạn, nhiều request chờ, trạng thái hôm nay và lịch sử dài.
+
+## 2026-09-10 — Vòng đời mục tiêu và task hỗ trợ
+
+- Đã làm: thêm `/goal` để xem mục tiêu tuần, trạng thái mục tiêu, task hỗ trợ đã gắn và các việc riêng có thể gắn. Người dùng có thể dùng `/goal add T123` hoặc `/goal remove T123`; các nút nhanh thực hiện cùng thao tác.
+- Đã làm: `/goal done` và `/goal reopen` luôn yêu cầu xác nhận. Hoàn thành task không tự suy ra mục tiêu đã đạt; check-in ghi thẳng đúng mục tiêu thì mới đồng thời hoàn tất mục tiêu đó.
+- Đã làm: `/week continue` giữ nguyên identity của mục tiêu tuần trước, chỉ hỏi lại cam kết và thói quen của tuần mới. Identity được nối qua `normalized_title`, nên task đã gắn và lịch sử mục tiêu không bị nhân bản khi tên mục tiêu giữ nguyên.
+- Telegram: đã bổ sung `/goal` vào command menu.
+- Đã kiểm chứng: `npm run check` pass với 51 tests, typecheck và Worker build dry-run. Ca mới phủ xem/gắn/bỏ gắn task, xác nhận đóng/mở mục tiêu và tiếp tục mục tiêu qua tuần.

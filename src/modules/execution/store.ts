@@ -231,6 +231,7 @@ async function stageCheckIn(db: D1Database, statements: D1PreparedStatement[], g
     SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(checkIn.weekStart,checkIn.item.id,quantity,checkIn.text,key,checkIn.sourceUpdate,checkIn.occurredAt,localDay,actualValue ?? null,actualValue === undefined ? null : 'minutes',metThreshold === undefined ? null : Number(metThreshold),...args()));
   if (checkIn.item.metric === 'completion' || (checkIn.item.target_count !== null && completed >= checkIn.item.target_count)) {
     statements.push(db.prepare(`UPDATE weekly_plan_items SET status='completed' WHERE id=? AND ${guard}`).bind(checkIn.item.id,...args()));
+    if (checkIn.item.kind === 'goal' && checkIn.item.goal_id) statements.push(db.prepare(`UPDATE goals SET status='completed' WHERE id=? AND ${guard}`).bind(checkIn.item.goal_id,...args()));
   }
   if (checkIn.outcome === 'recorded') {
     statements.push(db.prepare(`INSERT OR IGNORE INTO checkin_outcomes(chat_id,source_update,outcome,created_at)
@@ -515,8 +516,51 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       else {
         const carryovers = (await db.prepare(`SELECT t.id,t.title FROM weekly_task_carryovers c JOIN tasks t ON t.id=c.task_id
           WHERE c.week_start=? AND t.status='open' ORDER BY t.created_at,t.id`).bind(date).all<{id:string;title:string}>()).results;
-        statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,week_start,created_at) SELECT 1,?,'goal',?,? WHERE ${guard}`).bind(job.chat_id, date, now, ...args()));
-        result = `Mình lập kế hoạch tuần bắt đầu ${date} nhé.${carryovers.length ? `\n\nTask giữ từ tuần trước:\n${carryovers.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\nMục tiêu công việc quan trọng nhất của anh là gì?`;
+        const previous = command.continueGoal ? await db.prepare("SELECT goal FROM weekly_plans WHERE chat_id=? AND status='active' AND week_start<? ORDER BY week_start DESC LIMIT 1")
+          .bind(job.chat_id,date).first<{goal:string}>() : undefined;
+        if (command.continueGoal && !previous) result = 'Em chưa thấy mục tiêu tuần trước để tiếp tục. Anh dùng /week để lập kế hoạch mới nhé.';
+        else {
+          statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,goal,week_start,created_at) SELECT 1,?,?,?,?,? WHERE ${guard}`)
+            .bind(job.chat_id,previous ? 'commitment' : 'goal',previous?.goal ?? null,date,now,...args()));
+          result = `Mình lập kế hoạch tuần bắt đầu ${date} nhé.${previous ? `\n\nTiếp tục mục tiêu: ${previous.goal}.` : ''}${carryovers.length ? `\n\nTask giữ từ tuần trước:\n${carryovers.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\n${previous ? 'Cam kết cá nhân tuần này của anh là gì?' : 'Mục tiêu công việc quan trọng nhất của anh là gì?'}`;
+        }
+      }
+    } else if (command.kind === 'goal') {
+      const currentWeek = weekStart(now);
+      const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+        .bind(currentWeek,job.chat_id).first<WeeklyPlan>();
+      if (!plan) result = 'Tuần này chưa có mục tiêu đang theo dõi. Anh nhắn /week để lập kế hoạch nhé.';
+      else {
+        const goalItem = (await ensurePlanItems(db,plan,now)).find(item=>item.kind==='goal');
+        const goal = goalItem?.goal_id ? await db.prepare('SELECT id,title,status FROM goals WHERE id=? AND chat_id=?').bind(goalItem.goal_id,job.chat_id).first<{id:number;title:string;status:'active'|'completed'|'archived'}>() : undefined;
+        if (!goal || !goalItem) result = 'Em chưa tạo được dữ liệu mục tiêu tuần này. Anh thử lại /goal giúp em.';
+        else if (command.action === 'complete' || command.action === 'reopen') {
+          const action = command.action === 'complete' ? 'complete' : 'reopen';
+          result = action === 'complete' ? `Anh muốn đánh dấu mục tiêu “${goal.title}” đã đạt. Task hoàn thành không tự quyết định điều này. Anh bấm nút để xác nhận.`
+            : `Anh muốn mở lại mục tiêu “${goal.title}”. Anh bấm nút để xác nhận.`;
+          replyMarkup = confirmationButtons(`goal:${action}:${goal.id}`);
+        } else if (command.action === 'attach' || command.action === 'detach') {
+          const task = await db.prepare('SELECT id,title,status,goal_id FROM tasks WHERE id=?').bind(command.taskId).first<{id:string;title:string;status:string;goal_id:number|null}>();
+          if (!task) result = 'Em không thấy task này. Anh dùng /list để xem mã task nhé.';
+          else if (command.action === 'attach') {
+            statements.push(db.prepare(`UPDATE tasks SET goal_id=? WHERE id=? AND ${guard}`).bind(goal.id,task.id,...args()));
+            result = `Đã gắn ${task.id}: ${task.title} với mục tiêu “${goal.title}”.`;
+          } else if (task.goal_id !== goal.id) result = `${task.id} hiện không thuộc mục tiêu “${goal.title}”.`;
+          else {
+            statements.push(db.prepare(`UPDATE tasks SET goal_id=NULL WHERE id=? AND ${guard}`).bind(task.id,...args()));
+            result = `Đã chuyển ${task.id}: ${task.title} thành việc riêng.`;
+          }
+        } else {
+          const [linked,independent] = await Promise.all([
+            db.prepare("SELECT id,title,status FROM tasks WHERE goal_id=? ORDER BY status,created_at,id LIMIT 10").bind(goal.id).all<{id:string;title:string;status:'open'|'done'}>(),
+            db.prepare("SELECT id,title FROM tasks WHERE status='open' AND goal_id IS NULL ORDER BY created_at,id LIMIT 4").all<{id:string;title:string}>(),
+          ]);
+          result = `Mục tiêu\n${goal.title}\nTrạng thái: ${goal.status === 'completed' ? 'đã đạt' : 'đang theo dõi'}\n\nTask hỗ trợ:\n${linked.results.length ? linked.results.map(task=>`• ${task.status === 'done' ? '✓' : '○'} ${task.id}: ${task.title}`).join('\n') : 'Chưa có task nào gắn mục tiêu này.'}${independent.results.length ? `\n\nViệc riêng có thể gắn:\n${independent.results.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\nGắn: /goal add T...\nBỏ gắn: /goal remove T...`;
+          const buttons: ReplyMarkup['inline_keyboard'] = [];
+          for (const task of independent.results.slice(0,2)) buttons.push([{text:`Gắn ${task.id}`,callback_data:`_navi:goal:attach:${task.id}`}]);
+          for (const task of linked.results.filter(task=>task.status==='open').slice(0,2)) buttons.push([{text:`Bỏ gắn ${task.id}`,callback_data:`_navi:goal:detach:${task.id}`}]);
+          replyMarkup = buttons.length ? {inline_keyboard:buttons} : undefined;
+        }
       }
     } else if (command.kind === 'today') {
       result = await todaySummary(db, job.chat_id, now);
@@ -818,6 +862,17 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       }
     } else if (command.kind === 'confirm' || command.kind === 'reject') {
+      const goalTarget = command.target?.match(/^goal:(complete|reopen):(\d+)$/u);
+      if (goalTarget) {
+        const goal = await db.prepare('SELECT id,title,status FROM goals WHERE id=? AND chat_id=?').bind(Number(goalTarget[2]),job.chat_id).first<{id:number;title:string;status:string}>();
+        if (!goal) result = 'Mục tiêu này không còn tồn tại hoặc không thuộc cuộc trò chuyện này.';
+        else if (command.kind === 'reject') result = 'Đã giữ nguyên trạng thái mục tiêu.';
+        else {
+          const status = goalTarget[1] === 'complete' ? 'completed' : 'active';
+          statements.push(db.prepare(`UPDATE goals SET status=? WHERE id=? AND chat_id=? AND ${guard}`).bind(status,goal.id,job.chat_id,...args()));
+          result = status === 'completed' ? `Đã đánh dấu mục tiêu “${goal.title}” đã đạt.` : `Đã mở lại mục tiêu “${goal.title}”.`;
+        }
+      } else {
       const checkinChange = command.target && !command.target.startsWith('checkin:') ? undefined
         : await db.prepare(`SELECT id,checkin_id,action,new_note FROM checkin_change_requests WHERE chat_id=? AND status='pending'
           ${command.target?.startsWith('checkin:') ? 'AND checkin_id=?' : ''} ORDER BY created_at DESC LIMIT 1`)
@@ -901,6 +956,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`).bind(taskId, approval.title, normalize(approval.title), approval.source_update, now, ...args()));
         statements.push(db.prepare(`UPDATE approval_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now, approval.id, ...args()));
         result = `Đã xác nhận và thêm ${taskId}: ${approval.title}\nKhi xong, anh nhắn /done ${taskId}.`;
+      }
       }
       }
       }

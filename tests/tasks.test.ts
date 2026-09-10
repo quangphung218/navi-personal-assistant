@@ -48,7 +48,7 @@ beforeEach(async()=>{
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
-    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','progress','insights','export','add','list','done','reminders','status','help']);
+    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','goal','today','schedule','review','progress','insights','export','add','list','done','reminders','status','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
     expect(parseCommand('/progress')).toEqual({kind:'progressList',page:0});
     expect(parseCommand('/add mục tiêu: Viết README')).toEqual({kind:'add',title:'Viết README',goalScoped:true});
@@ -57,6 +57,9 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/export json')).toEqual({kind:'export',format:'json'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
+    expect(parseCommand('/goal')).toEqual({kind:'goal',action:'show'});
+    expect(parseCommand('/goal add T12')).toEqual({kind:'goal',action:'attach',taskId:'T12'});
+    expect(parseCommand('/week continue')).toEqual({kind:'week',continueGoal:true});
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();
@@ -491,7 +494,7 @@ describe('task conversation on real D1 bindings',()=>{
   it('keeps a measured habit below its minimum out of progress and links goal tasks explicitly',async()=>{
     await link(); await replies();
     for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,"Thiền trong 5'"],[6,'Nghe tiếng Anh'],[7,'đúng']] as const) {
-      await receive(update(id,text)); await processNext(db); await replies();
+      await accept(db,update(id,text),false); await processNext(db); await replies();
     }
     await receive(update(8,'Hôm nay anh đã thiền 2 phút')); await processNext(db);
     expect((await replies()).at(-1)).toContain('Ngày này chưa tính vào tiến độ');
@@ -502,6 +505,44 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await tasks(db))[0]).toMatchObject({title:'Viết README',goal_title:'Ship Navi'});
     await receive(update(11,'/add Mua cà phê')); await processNext(db);
     expect((await tasks(db))[1]).toMatchObject({title:'Mua cà phê',goal_id:null});
+  });
+  it('shows a goal, links existing tasks, and changes its status only after confirmation',async()=>{
+    await link(); await replies();
+    let lastReply='';
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng'],[8,'/add Viết README'],[9,'/goal']] as const) {
+      await accept(db,update(id,text),false); await processNext(db); lastReply=(await replies()).at(-1) ?? '';
+    }
+    expect(lastReply).toContain('T8: Viết README');
+    await accept(db,update(10,'/goal add T8'),false); await processNext(db); await replies();
+    expect((await tasks(db))[0]).toMatchObject({id:'T8',goal_title:'Ship Navi'});
+    await accept(db,update(11,'/goal remove T8'),false); await processNext(db); await replies();
+    expect((await tasks(db))[0]).toMatchObject({id:'T8',goal_id:null});
+    await accept(db,update(12,'/goal done'),false); await processNext(db); await replies();
+    const goal = await db.prepare("SELECT id,status FROM goals WHERE normalized_title='ship navi'").first<{id:number;status:string}>();
+    expect(goal?.status).toBe('active');
+    await accept(db,{...callbackUpdate(13,`_navi:confirm:goal:complete:${goal!.id}`),message:{from:{id:123,is_bot:false},chat:{id:123,type:'private'},text:`_navi:confirm:goal:complete:${goal!.id}`}},false); await processNext(db); await replies();
+    expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'completed'});
+    await accept(db,{...callbackUpdate(14,`_navi:confirm:goal:reopen:${goal!.id}`),message:{from:{id:123,is_bot:false},chat:{id:123,type:'private'},text:`_navi:confirm:goal:reopen:${goal!.id}`}},false); await processNext(db); await replies();
+    expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'active'});
+  });
+  it('continues a goal into the next week without creating a second identity',async()=>{
+    const now=Date.now(), local=new Date(now+7*60*60*1000), day=(local.getUTCDay()+6)%7;
+    local.setUTCDate(local.getUTCDate()-day);
+    const currentWeek=local.toISOString().slice(0,10), previousDate=new Date(`${currentWeek}T00:00:00Z`);
+    previousDate.setUTCDate(previousDate.getUTCDate()-7);
+    const previousWeek=previousDate.toISOString().slice(0,10);
+    await link(); await replies();
+    await db.prepare('INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at) VALUES(?,?,?,?,?,?,?)')
+      .bind(previousWeek,'123','Ship Navi','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách',now-1).run();
+    await db.prepare('INSERT INTO goals(chat_id,title,normalized_title,created_at) VALUES(?,?,?,?)').bind('123','Ship Navi','ship navi',now-1).run();
+    await accept(db,update(9,'/week continue'),false,now); expect(await processNext(db,now)).toBe(true);
+    expect((await replies()).at(-1)).toContain('Tiếp tục mục tiêu: Ship Navi');
+    for(const [id,text] of [[10,'Apply thêm 5 jobs'],[11,'Chạy bộ 3 buổi'],[12,'Đọc sách'],[13,'đúng'],[14,'/goal']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    expect(await db.prepare("SELECT COUNT(*) AS count FROM goals WHERE normalized_title='ship navi'").first()).toMatchObject({count:1});
+    const links=(await db.prepare("SELECT DISTINCT goal_id FROM weekly_plan_items WHERE kind='goal' ORDER BY goal_id").all<{goal_id:number}>()).results;
+    expect(links).toHaveLength(1);
   });
   it('preserves a habit measurement when correcting only its note',async()=>{
     await link(); await replies();

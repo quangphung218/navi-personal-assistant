@@ -1,6 +1,6 @@
 export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { kind: 'done'; reference: string }
   | { kind: 'list'; includeDone: boolean } | { kind: 'confirm'; target?: string } | { kind: 'reject'; target?: string }
-  | { kind: 'week' } | { kind: 'weekStatus' } | { kind: 'progressList'; page: number }
+  | { kind: 'week'; continueGoal: boolean } | { kind: 'weekStatus' } | { kind: 'progressList'; page: number }
   | { kind: 'today' } | { kind: 'review'; carry?: string }
   | { kind: 'schedule'; reference: string; day: number; month: number; year?: number; hour: number; minute: number }
   | { kind: 'defer'; reference: string } | { kind: 'clearSchedule'; reference: string }
@@ -11,6 +11,7 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
   | { kind: 'checkIn'; text: string; date?: { day: number; month: number; year?: number } }
   | { kind: 'measurement'; value: number; unit: 'minutes' }
   | { kind: 'cancelMeasurement'; sourceUpdate?: number }
+  | { kind: 'goal'; action: 'show'|'complete'|'reopen'|'attach'|'detach'; taskId?: string }
   | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
   | { kind: 'reminders'; enabled?: boolean } | { kind: 'export'; format: 'markdown'|'json' }
   | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'status' }
@@ -22,7 +23,7 @@ export function parseCommand(text: string): Command {
   if (/^\/cancelmeasurement$/iu.test(value)) return {kind:'cancelMeasurement'};
   const cancelMeasurement = value.match(/^_navi:measurement:cancel:(\d+)$/u);
   if (cancelMeasurement) return {kind:'cancelMeasurement',sourceUpdate:Number(cancelMeasurement[1])};
-  const callback = value.match(/^_navi:(confirm|reject):([a-z]+:[a-z0-9-]+)$/iu);
+  const callback = value.match(/^_navi:(confirm|reject):([a-z]+:[a-z0-9:-]+)$/iu);
   if (callback) return { kind: callback[1] === 'confirm' ? 'confirm' : 'reject', target: callback[2]!.toLowerCase() };
   if (/^_navi:show:progress$/iu.test(value)) return { kind: 'progressList', page:0 };
   const progressPage = value.match(/^_navi:show:progress:(\d{1,3})$/iu);
@@ -32,6 +33,8 @@ export function parseCommand(text: string): Command {
   const taskAction = value.match(/^_navi:task:(done|defer|clear):(T\d+)$/iu);
   if (taskAction) return taskAction[1] === 'done' ? { kind: 'done', reference: taskAction[2]!.toUpperCase() }
     : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };
+  const goalAction = value.match(/^_navi:goal:(attach|detach):(T\d+)$/iu);
+  if (goalAction) return {kind:'goal',action:goalAction[1] as 'attach'|'detach',taskId:goalAction[2]!.toUpperCase()};
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
     const raw = add[1]!.trim().replace(/\s+/g, ' ');
@@ -76,7 +79,17 @@ export function parseCommand(text: string): Command {
   const progressList = value.match(/^\/progress(?:@\w+)?(?:\s+(\d{1,3}))?$/iu);
   if (progressList) return { kind: 'progressList', page:Math.max(0,Number(progressList[1] ?? 1)-1) };
   if (/^(?:\/week(?:@\w+)?\s+status|tiến độ tuần|tuần này thế nào\??)$/iu.test(value)) return { kind: 'weekStatus' };
-  if (/^(?:\/week|\/tuan|lập kế hoạch tuần|kế hoạch tuần)(?:@\w+)?$/iu.test(value)) return { kind: 'week' };
+  if (/^\/(?:week|tuan)(?:@\w+)?\s+(?:continue|tiếp tục)$/iu.test(value)) return {kind:'week',continueGoal:true};
+  if (/^(?:\/week|\/tuan|lập kế hoạch tuần|kế hoạch tuần)(?:@\w+)?$/iu.test(value)) return { kind: 'week',continueGoal:false };
+  const goal = value.match(/^\/goal(?:@\w+)?(?:\s+(done|complete|reopen|add|remove)\s*(T\d+)?)?$/iu);
+  if (goal) {
+    const action = goal[1]?.toLowerCase();
+    if (!action) return {kind:'goal',action:'show'};
+    if (/^(?:done|complete)$/.test(action)) return {kind:'goal',action:'complete'};
+    if (action === 'reopen') return {kind:'goal',action:'reopen'};
+    if (action === 'add' && goal[2]) return {kind:'goal',action:'attach',taskId:goal[2].toUpperCase()};
+    if (action === 'remove' && goal[2]) return {kind:'goal',action:'detach',taskId:goal[2].toUpperCase()};
+  }
   if (/^(?:\/reminders?(?:@\w+)?\s+(?:on|bật)|bật nhắc(?: tiến độ)?|bật reminder)$/iu.test(value)) return { kind: 'reminders', enabled: true };
   if (/^(?:\/reminders?(?:@\w+)?\s+(?:off|tắt)|tắt nhắc(?: tiến độ)?|tắt reminder)$/iu.test(value)) return { kind: 'reminders', enabled: false };
   if (/^(?:\/reminders?(?:@\w+)?|lịch nhắc|nhắc tiến độ thế nào)$/iu.test(value)) return { kind: 'reminders' };

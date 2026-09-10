@@ -277,8 +277,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect(progress).toContain('Lịch sử đã ghi, chưa gắn với mục kế hoạch hiện tại');
     expect(progress).toContain('Chạy bộ ngày 07/09');
     expect(progress).toContain('Chạy bộ ngày 08/09');
-    expect(progress).toContain('Mục tiêu: Tìm việc');
-    expect(progress).toContain('Cam kết: Apply 5 job');
+    expect(progress).toContain('Mục tiêu\nTìm việc');
+    expect(progress).toContain('Cam kết\nApply 5 job');
     expect(progress).toContain('Thói quen 1\nThiền 5 buổi');
     expect(progress).toContain('░░░░░░░░ 0/5');
     expect(progress).toContain('○ Chưa hoàn thành');
@@ -545,6 +545,45 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await replies()).at(-1)).toContain('Đã ghi nhận 5 phút');
     expect(await db.prepare('SELECT actual_value,met_threshold FROM weekly_checkins').first()).toMatchObject({actual_value:5,met_threshold:1});
     expect(await db.prepare("SELECT status FROM checkin_measurement_requests WHERE source_update=8").first()).toMatchObject({status:'recorded'});
+  });
+  it('keeps the original day across midnight and supports scoped cancellation and expiry',async()=>{
+    const now=Date.parse('2026-09-10T23:55:00+07:00');
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Thiền 5 phút'],[6,'Nghe tiếng Anh 10 phút'],[7,'đúng'],[8,'Hôm nay anh đã thiền']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    await accept(db,update(9,'5 phút'),false,now+10*60*1000); await processNext(db,now+10*60*1000); await replies();
+    expect(await db.prepare('SELECT local_date,actual_value FROM weekly_checkins').first()).toMatchObject({local_date:'2026-09-10',actual_value:5});
+    await accept(db,update(10,'/today'),false,now+10*60*1000); await processNext(db,now+10*60*1000);
+    const today=(await replies()).at(-1)!;
+    expect(today).toContain('Chuỗi hiện tại: 1 ngày');
+    expect(today).toContain('Hôm nay: chưa ghi nhận');
+    for(const [id,text] of [[11,'Hôm nay anh đã thiền'],[12,'Hôm nay anh đã nghe tiếng Anh'],[13,'_navi:measurement:cancel:11']] as const) {
+      await accept(db,update(id,text),false,now+20*60*1000); await processNext(db,now+20*60*1000); await replies();
+    }
+    expect(await db.prepare("SELECT source_update FROM checkin_measurement_requests WHERE status='pending'").first()).toMatchObject({source_update:12});
+    await accept(db,update(14,'/cancelmeasurement'),false,now+20*60*1000); await processNext(db,now+20*60*1000); await replies();
+    expect(await db.prepare("SELECT id FROM checkin_measurement_requests WHERE status='pending'").first()).toBeNull();
+    await accept(db,update(15,'Ngày 10/9 anh đã thiền'),false,now+20*60*1000); await processNext(db,now+20*60*1000); await replies();
+    const request=await db.prepare('SELECT created_at,expires_at FROM checkin_measurement_requests WHERE source_update=15').first<{created_at:number;expires_at:number}>();
+    expect(request!.expires_at-request!.created_at).toBe(24*60*60*1000);
+    await accept(db,update(16,'5 phút'),false,request!.expires_at+1); await processNext(db,request!.expires_at+1);
+    expect((await replies()).at(-1)).toContain('hết hạn');
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM weekly_checkins').first()).toMatchObject({n:1});
+  });
+  it('shows unmet and met habits today and refuses ambiguous old measurement requests',async()=>{
+    await link(); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Thiền 5 phút'],[6,'Nghe tiếng Anh 10 phút'],[7,'đúng'],[8,'Hôm nay anh đã thiền 2 phút'],[9,'Hôm nay anh đã nghe tiếng Anh 10 phút'],[10,'/today']] as const) {
+      await receive(update(id,text)); await processNext(db);
+    }
+    const today=(await replies()).at(-1)!;
+    expect(today).toContain('Hôm nay: đã ghi nhận, chưa đủ ngưỡng');
+    expect(today).toContain('Hôm nay: đã đạt');
+    await db.prepare(`INSERT INTO checkin_measurement_requests(chat_id,plan_item_id,week_start,local_date,source_update,created_at,expires_at)
+      SELECT '123',id,week_start,week_start,100+id,?,? FROM weekly_plan_items WHERE kind='habit'`).bind(Date.now(),Date.now()+60000).run();
+    await receive(update(11,'5 phút')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('Có nhiều câu hỏi');
+    expect(await db.prepare('SELECT COUNT(*) AS n FROM weekly_checkins').first()).toMatchObject({n:2});
   });
   it('paginates progress history with a callback-safe page command',async()=>{
     await link(); await replies();

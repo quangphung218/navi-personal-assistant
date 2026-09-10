@@ -10,6 +10,7 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
   | { kind: 'checkInChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkIn'; text: string; date?: { day: number; month: number; year?: number } }
   | { kind: 'measurement'; value: number; unit: 'minutes' }
+  | { kind: 'cancelMeasurement'; sourceUpdate?: number }
   | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
   | { kind: 'reminders'; enabled?: boolean } | { kind: 'export'; format: 'markdown'|'json' }
   | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'status' }
@@ -18,6 +19,9 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
 export function parseCommand(text: string): Command {
   const value = text.trim();
+  if (/^\/cancelmeasurement$/iu.test(value)) return {kind:'cancelMeasurement'};
+  const cancelMeasurement = value.match(/^_navi:measurement:cancel:(\d+)$/u);
+  if (cancelMeasurement) return {kind:'cancelMeasurement',sourceUpdate:Number(cancelMeasurement[1])};
   const callback = value.match(/^_navi:(confirm|reject):([a-z]+:[a-z0-9-]+)$/iu);
   if (callback) return { kind: callback[1] === 'confirm' ? 'confirm' : 'reject', target: callback[2]!.toLowerCase() };
   if (/^_navi:show:progress$/iu.test(value)) return { kind: 'progressList', page:0 };

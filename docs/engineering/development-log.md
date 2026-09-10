@@ -309,3 +309,12 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Dữ liệu: migration `0020_checkin_measurement_requests.sql` thêm trạng thái pending/recorded/expired cho yêu cầu số phút, không chứa secret hay thay đổi check-in cũ.
 - Đã áp dụng migration remote và deploy Processor version `f7eaf5e8-48e5-42be-810b-389ae9c2b807`.
 - Đã kiểm chứng: `npm run check` pass với 47 tests, typecheck và Worker build dry-run. Ca mới kiểm tra trả lời bare `5 phút` và trang hai của progress.
+
+## 2026-09-10 — Hoàn thiện vòng check-in hằng ngày
+
+- Đã làm: một yêu cầu số phút mới thay thế yêu cầu trước đó. Nút Hủy chỉ hủy đúng yêu cầu đã tạo nút; `/cancelmeasurement` hủy các yêu cầu còn chờ. Yêu cầu quá 24 giờ được đánh dấu hết hạn trước khi xử lý câu trả lời. Nếu dữ liệu cũ có nhiều yêu cầu chờ, Navi yêu cầu anh gửi lại cập nhật có tên habit thay vì tự chọn.
+- Đã làm: câu trả lời số phút dùng ngày của câu hỏi ban đầu, kể cả khi anh trả lời sau nửa đêm. Một check-in trực tiếp cho cùng habit/ngày cũng tự đóng yêu cầu số phút đang chờ.
+- Đã làm: `/today` hiển thị từng habit là `chưa ghi nhận`, `đã ghi nhận, chưa đủ ngưỡng` hoặc `đã đạt`. Streak hằng ngày giữ chuỗi đến hôm qua khi hôm nay chưa có check-in, thay vì hiện 0 từ đầu ngày.
+- Đã làm: `/progress` trang đầu dùng bảng tiến độ và lịch sử giới hạn; các trang sau chỉ hiện lịch sử. Nội dung check-in, title task và title mục bị cắt có kiểm soát để giữ delivery trong giới hạn Telegram.
+- Đã deploy Processor version `4a732df1-a7a4-4ec9-a2e1-803ec12f0a04`.
+- Đã kiểm chứng: `npm run check` pass với 49 tests, typecheck và Worker build dry-run. Ca mới phủ qua nửa đêm, hủy/hết hạn, nhiều request chờ, trạng thái hôm nay và lịch sử dài.

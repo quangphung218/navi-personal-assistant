@@ -340,3 +340,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: Navi hiểu `mục tiêu này xong rồi`, `mở lại mục tiêu này`, `gắn task này vào mục tiêu`, `bỏ task này khỏi mục tiêu` và `task này để tuần sau`. Các tham chiếu này chỉ được nối khi đúng một task đang mở; có nhiều task thì Navi yêu cầu mã `T...` thay vì đoán.
 - An toàn dữ liệu: hoàn tất mục tiêu vẫn mở màn xác nhận; chuyển task sang tuần vẫn đi qua bản ghi carryover có unique key như lệnh `/review carry T...`.
 - Đã kiểm chứng: `npm run check` pass với 53 tests, typecheck và Worker build dry-run. Ca mới phủ parser, task ngữ cảnh, confirmation mục tiêu, carryover và nội dung `/help`.
+
+## 2026-09-10 — Task được nói trong ngữ cảnh mục tiêu
+
+- Sự cố pilot: câu “mục tiêu apply 5 CV trong tuần này anh cần có task mới là xây dựng lại make CV cho từng vị trí” trước đây không khớp parser. Nó rơi vào OpenRouter, làm mất scope mục tiêu và thêm độ trễ từ model ngoài.
+- Đã sửa: parser nhận mẫu `mục tiêu … cần có task mới là …`, giữ nguyên nội dung task người dùng nói và gắn task vào mục tiêu tuần hiện hành. Luồng này không gọi AI fallback.
+- Độ trễ: Queue Processor có batch tối đa một giây. Với mẫu đã nhận diện, đường xử lý chỉ còn Queue, D1 và Telegram; giới hạn chờ OpenRouter 15 giây không còn áp dụng cho câu này.
+- Đã kiểm chứng: `npm run check` pass với 54 tests, typecheck và Worker build dry-run. Regression test dùng đúng câu pilot, kiểm tra task được gắn mục tiêu và AI fallback không được gọi.

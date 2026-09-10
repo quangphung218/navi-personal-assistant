@@ -64,6 +64,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('Mục tiêu này xong rồi')).toEqual({kind:'goal',action:'complete'});
     expect(parseCommand('Task này để tuần sau')).toEqual({kind:'review',carry:'đó'});
     expect(parseCommand('Gắn task này vào mục tiêu')).toEqual({kind:'goal',action:'attach',taskId:'đó'});
+    expect(parseCommand('Hello em, mục tiêu apply 5 cv trong tuần này anh cần có task mới là xây dựng lại make cv cho từng vị trí'))
+      .toEqual({kind:'add',title:'xây dựng lại make cv cho từng vị trí',goalScoped:true});
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();
@@ -561,6 +563,18 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toMatchObject({task_id:'T8'});
     await accept(db,update(12,'/help'),false,now); await processNext(db,now);
     expect((await replies()).at(-1)).toContain('mục tiêu này xong rồi');
+  });
+  it('adds a task scoped to the stated goal without waiting for the AI fallback',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Apply 5 CV phù hợp'],[4,'Apply 5 jobs'],[5,'Thiền 5 phút'],[6,'Nghe tiếng Anh'],[7,'đúng']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    await accept(db,update(8,'Hello em, mục tiêu apply 5 cv trong tuần này anh cần có task mới là xây dựng lại make cv cho từng vị trí'),false,now);
+    let aiCalls=0;
+    await processNext(db,now,async()=>{aiCalls++; return 'Không được dùng';});
+    expect(aiCalls).toBe(0);
+    expect((await tasks(db))[0]).toMatchObject({id:'T8',title:'xây dựng lại make cv cho từng vị trí',goal_title:'Apply 5 CV phù hợp'});
   });
   it('continues a goal into the next week without creating a second identity',async()=>{
     const now=Date.now(), local=new Date(now+7*60*60*1000), day=(local.getUTCDay()+6)%7;

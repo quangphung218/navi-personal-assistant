@@ -35,6 +35,11 @@ export function parseCommand(text: string): Command {
     : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };
   const goalAction = value.match(/^_navi:goal:(attach|detach):(T\d+)$/iu);
   if (goalAction) return {kind:'goal',action:goalAction[1] as 'attach'|'detach',taskId:goalAction[2]!.toUpperCase()};
+  const contextualGoalTask = value.match(/^(?:hello\s+em[,.!]?\s*)?(?:mục tiêu|goal)\b[\s\S]{0,160}?\b(?:anh\s+)?cần(?:\s+có)?\s+(?:một\s+)?(?:task|việc)(?:\s+mới)?\s*(?:là|:)\s*(.+)$/iu);
+  if (contextualGoalTask) {
+    const title = contextualGoalTask[1]!.trim().replace(/[.!?]+$/u, '').replace(/\s+/g, ' ');
+    if (title.length > 0 && title.length <= 180) return {kind:'add',title,goalScoped:true};
+  }
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
     const raw = add[1]!.trim().replace(/\s+/g, ' ');

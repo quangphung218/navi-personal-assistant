@@ -61,6 +61,8 @@ export function parseCommand(text: string): Command {
   }
   const carry = value.match(/^\/review(?:@\w+)?\s+carry\s+(T\d+)$/iu);
   if (carry) return { kind: 'review', carry: carry[1]!.toUpperCase() };
+  const reviewCarry = value.match(/^_navi:review:carry:(T\d+)$/iu);
+  if (reviewCarry) return { kind:'review', carry:reviewCarry[1]!.toUpperCase() };
   if (/^(?:\/review(?:@\w+)?|review tuần)$/iu.test(value)) return { kind: 'review' };
   const progressChange = value.match(/^\/progress(?:@\w+)?\s+(delete|xóa|xoá|edit|sửa)\s+(P\d+)(?:\s+(.+))?$/iu);
   if (progressChange) {

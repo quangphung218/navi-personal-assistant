@@ -326,3 +326,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: `/week continue` giữ nguyên identity của mục tiêu tuần trước, chỉ hỏi lại cam kết và thói quen của tuần mới. Identity được nối qua `normalized_title`, nên task đã gắn và lịch sử mục tiêu không bị nhân bản khi tên mục tiêu giữ nguyên.
 - Telegram: đã bổ sung `/goal` vào command menu.
 - Đã kiểm chứng: `npm run check` pass với 51 tests, typecheck và Worker build dry-run. Ca mới phủ xem/gắn/bỏ gắn task, xác nhận đóng/mở mục tiêu và tiếp tục mục tiêu qua tuần.
+
+## 2026-09-10 — Review tuần có thể hành động
+
+- Đã làm: `/review` và bản review tự gửi cuối tuần dùng cùng một bản tóm tắt: mục tiêu, cam kết, từng thói quen, các task còn mở và phạm vi task (hỗ trợ mục tiêu hoặc việc riêng).
+- Đã làm: mỗi review hiện tối đa năm task với nút `Đã xong` và `Sang tuần`. Nút `Sang tuần` dùng cùng luồng durable với `/review carry T...`, nên chỉ đánh dấu một carryover và không nhân bản task.
+- Giới hạn: review không tự quyết định xoá hoặc chuyển task; người dùng chọn rõ từng task. Khi có hơn năm task, Navi báo số còn lại và hướng dẫn dùng `/list`.
+- Đã kiểm chứng: `npm run check` pass với 52 tests, typecheck và Worker build dry-run. Ca mới phủ render nút review và callback chuyển task sang tuần.

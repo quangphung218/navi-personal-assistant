@@ -60,6 +60,7 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/goal')).toEqual({kind:'goal',action:'show'});
     expect(parseCommand('/goal add T12')).toEqual({kind:'goal',action:'attach',taskId:'T12'});
     expect(parseCommand('/week continue')).toEqual({kind:'week',continueGoal:true});
+    expect(parseCommand('_navi:review:carry:T12')).toEqual({kind:'review',carry:'T12'});
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();
@@ -524,6 +525,21 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'completed'});
     await accept(db,{...callbackUpdate(14,`_navi:confirm:goal:reopen:${goal!.id}`),message:{from:{id:123,is_bot:false},chat:{id:123,type:'private'},text:`_navi:confirm:goal:reopen:${goal!.id}`}},false); await processNext(db); await replies();
     expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'active'});
+  });
+  it('makes an actionable weekly review and carries a chosen task forward',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng'],[8,'/add Viết README']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    await accept(db,update(9,'/review'),false,now); await processNext(db,now);
+    const delivery=await db.prepare('SELECT text,reply_markup FROM deliveries ORDER BY job_id DESC LIMIT 1').first<{text:string;reply_markup:string}>();
+    expect(delivery?.text).toContain('Review tuần');
+    expect(delivery?.text).toContain('T8: Viết README — việc riêng');
+    expect(JSON.parse(delivery!.reply_markup)).toEqual({inline_keyboard:[[{text:'Đã xong T8',callback_data:'_navi:task:done:T8'},{text:'Sang tuần T8',callback_data:'_navi:review:carry:T8'}]]});
+    await replies();
+    await accept(db,update(10,'_navi:review:carry:T8'),false,now); await processNext(db,now); await replies();
+    expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toMatchObject({task_id:'T8'});
   });
   it('continues a goal into the next week without creating a second identity',async()=>{
     const now=Date.now(), local=new Date(now+7*60*60*1000), day=(local.getUTCDay()+6)%7;

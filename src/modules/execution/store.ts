@@ -371,6 +371,30 @@ export async function tasks(db: D1Database, includeDone = false): Promise<Task[]
   return result.results;
 }
 
+function reviewTaskButtons(open: Task[]): ReplyMarkup | undefined {
+  const buttons: ReplyMarkup['inline_keyboard'] = [];
+  for (const task of open.slice(0,5)) {
+    buttons.push([
+      {text:`Đã xong ${task.id}`,callback_data:`_navi:task:done:${task.id}`},
+      {text:`Sang tuần ${task.id}`,callback_data:`_navi:review:carry:${task.id}`},
+    ]);
+  }
+  return buttons.length ? {inline_keyboard:buttons} : undefined;
+}
+
+async function weeklyReviewSummary(db: D1Database, plan: WeeklyPlan, now: number): Promise<{text:string; replyMarkup?:ReplyMarkup}> {
+  const [open,items] = await Promise.all([tasks(db),ensurePlanItems(db,plan,now)]);
+  const counts = progressCounts(items);
+  const taskLines = open.length
+    ? open.slice(0,5).map(task=>`• ${task.id}: ${task.title}${task.goal_title ? ` — hỗ trợ: ${task.goal_title}` : ' — việc riêng'}`).join('\n')
+    : 'Không còn task mở.';
+  const remainder = open.length > 5 ? `\nCòn ${open.length-5} task khác; dùng /list để xem toàn bộ.` : '';
+  return {
+    text: `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\nReview tuần\nTask còn mở:\n${taskLines}${remainder}\n\nAnh có thể đánh dấu xong hoặc chọn task cần giữ sang tuần.`,
+    replyMarkup: reviewTaskButtons(open),
+  };
+}
+
 async function todaySummary(db: D1Database, chatId: string, now: number): Promise<string> {
   const date = localDate(now), start = Date.parse(`${date}T00:00:00+07:00`), end = start + 24 * 60 * 60 * 1000;
   const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
@@ -598,10 +622,12 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       } else {
         const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(currentWeek, job.chat_id).first<WeeklyPlan>();
-        const open = await tasks(db);
-        const items = plan ? await ensurePlanItems(db,plan,now) : [];
-        const counts = progressCounts(items);
-        result = `${plan ? `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\n` : ''}Review tuần:\n${open.length ? `Task đang mở:\n${open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n')}\n\nChuyển một task: /review carry T...` : 'Không còn task mở.'}`;
+        if (!plan) result = 'Tuần này chưa có kế hoạch để review. Anh nhắn /week để lập kế hoạch nhé.';
+        else {
+          const summary = await weeklyReviewSummary(db,plan,now);
+          result = summary.text;
+          replyMarkup = summary.replyMarkup;
+        }
       }
     } else if (command.kind === 'reminders') {
       const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(job.chat_id).first<ReminderPreference>();
@@ -1082,15 +1108,14 @@ export async function enqueueWeeklyReview(db: D1Database, now = Date.now()): Pro
   const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND status='active' LIMIT 1")
     .bind(weekStart(now)).first<WeeklyPlan>();
   if (!plan) return false;
-  const open = await tasks(db);
-  const items = await ensurePlanItems(db, plan, now), counts = progressCounts(items);
-  const text = `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\nReview tuần:\n${open.length ? open.slice(0,10).map(task=>`• ${task.id}: ${task.title}`).join('\n') : 'Không còn task mở.'}\n\nChọn task cần giữ: /review carry T...`;
+  const summary = await weeklyReviewSummary(db,plan,now);
+  const text = summary.text;
   const updateId = -(4_000_000_000 + Number(plan.week_start.replaceAll('-','')));
   const results = await db.batch([
     db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at,status,result)
       SELECT ?,owner.user_id,owner.chat_id,?,?, 'done', ? FROM owner
       WHERE NOT EXISTS(SELECT 1 FROM weekly_reviews WHERE week_start=?)`).bind(updateId,text,now,text,plan.week_start),
-    db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(JSON.stringify(progressButton), updateId),
+    db.prepare('INSERT OR IGNORE INTO deliveries(job_id,chat_id,text,reply_markup) SELECT id,chat_id,result,? FROM jobs WHERE update_id=?').bind(summary.replyMarkup ? JSON.stringify(summary.replyMarkup) : null, updateId),
     db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at,processing_started_at,processing_finished_at) SELECT id,created_at,created_at,created_at FROM jobs WHERE update_id=?').bind(updateId),
     db.prepare('INSERT OR IGNORE INTO weekly_reviews(week_start,job_id,created_at) SELECT ?,id,? FROM jobs WHERE update_id=?').bind(plan.week_start,now,updateId),
   ]);

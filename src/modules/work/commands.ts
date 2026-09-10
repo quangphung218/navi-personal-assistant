@@ -35,11 +35,14 @@ export function parseCommand(text: string): Command {
     : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };
   const goalAction = value.match(/^_navi:goal:(attach|detach):(T\d+)$/iu);
   if (goalAction) return {kind:'goal',action:goalAction[1] as 'attach'|'detach',taskId:goalAction[2]!.toUpperCase()};
-  const contextualGoalTask = value.match(/^(?:hello\s+em[,.!]?\s*)?(?:mục tiêu|goal)\b[\s\S]{0,160}?\b(?:anh\s+)?cần(?:\s+có)?\s+(?:một\s+)?(?:task|việc)(?:\s+mới)?\s*(?:là|:)\s*(.+)$/iu);
-  if (contextualGoalTask) {
-    const title = contextualGoalTask[1]!.trim().replace(/[.!?]+$/u, '').replace(/\s+/g, ' ');
-    if (title.length > 0 && title.length <= 180) return {kind:'add',title,goalScoped:true};
-  }
+  const intent = interpretConversationalIntent(value);
+  if (intent?.kind === 'add_task') return {kind:'add',title:intent.title,goalScoped:intent.goalScoped};
+  if (intent?.kind === 'complete_goal') return {kind:'goal',action:'complete'};
+  if (intent?.kind === 'reopen_goal') return {kind:'goal',action:'reopen'};
+  if (intent?.kind === 'attach_recent_task') return {kind:'goal',action:'attach',taskId:'đó'};
+  if (intent?.kind === 'detach_recent_task') return {kind:'goal',action:'detach',taskId:'đó'};
+  if (intent?.kind === 'carry_recent_task') return {kind:'review',carry:'đó'};
+  if (intent?.kind === 'complete_recent_task') return {kind:'done',reference:'đó'};
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
     const raw = add[1]!.trim().replace(/\s+/g, ' ');
@@ -47,12 +50,6 @@ export function parseCommand(text: string): Command {
     const title = (scoped?.[1] ?? raw).trim();
     return title.length > 0 && title.length <= 180 ? { kind: 'add', title, goalScoped:Boolean(scoped) } : { kind: 'unknown' };
   }
-  if (/^(?:mục tiêu|goal)\s+(?:này|đó)\s+(?:đã )?(?:xong|hoàn thành)(?: rồi)?[.!]?$/iu.test(value)) return {kind:'goal',action:'complete'};
-  if(/^(?:mở lại|tiếp tục)\s+(?:mục tiêu|goal)\s+(?:này|đó)[.!]?$/iu.test(value)) return {kind:'goal',action:'reopen'};
-  if (/^(?:gắn|thêm)\s+(?:task|việc)\s+(?:này|đó)\s+(?:vào|cho)\s+(?:mục tiêu|goal)[.!]?$/iu.test(value)) return {kind:'goal',action:'attach',taskId:'đó'};
-  if (/^(?:bỏ|gỡ)\s+(?:task|việc)\s+(?:này|đó)\s+(?:khỏi|ra khỏi)\s+(?:mục tiêu|goal)[.!]?$/iu.test(value)) return {kind:'goal',action:'detach',taskId:'đó'};
-  if (/^(?:(?:task|việc)\s+(?:này|đó)\s+)?(?:để|sang)\s+tuần sau[.!]?$/iu.test(value)) return {kind:'review',carry:'đó'};
-  if (/^(?:đánh dấu(?: là)?\s+)?(?:việc|task|cái)\s+(?:này|đó)\s+(?:đã )?(?:xong|hoàn thành)[.!]?$/iu.test(value)) return { kind: 'done', reference: 'đó' };
   const done = value.match(/^(?:\/done(?:@\w+)?\s+|(?:xong|hoàn thành)\s+)(.+)$/iu);
   if (done) return { kind: 'done', reference: done[1]!.trim() };
   if (/^\/list(?:@\w+)?\s+all$/iu.test(value)) return { kind: 'list', includeDone: true };
@@ -133,3 +130,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
 export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/progress 2 — xem trang lịch sử tiếp theo\n/insights — xem mức Navi hiểu check-in tuần này\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\nNếu Navi hỏi số phút, anh chỉ cần trả lời: 5 phút\n\nTask\n/add Viết README — việc riêng\n/add mục tiêu: Viết README — việc cho mục tiêu tuần\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;
+import { interpretConversationalIntent } from './intent';

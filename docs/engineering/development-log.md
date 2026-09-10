@@ -354,3 +354,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: Ingress gửi Telegram typing action ngay sau khi nhận tin hợp lệ, Processor gửi lại action khi bắt đầu xử lý. Typing là best-effort, không ảnh hưởng job/delivery bền vững nếu Telegram không phản hồi.
 - Dữ liệu: migration `0021_job_latency_metrics.sql` đã áp dụng remote, chỉ thêm mốc thời gian và route; không lưu thêm nội dung hội thoại.
 - Đã kiểm chứng: `npm run check` pass với 55 tests, typecheck và Worker build dry-run. Ca mới kiểm tra route AI và mốc đo; test ingress mock Telegram typing để không gọi mạng ngoài.
+
+## 2026-09-10 — Lớp ý định hội thoại có cấu trúc
+
+- Đã làm: tách `interpretConversationalIntent` thành module có interface nhỏ, trả về ý định rõ ràng thay vì để command parser tự chứa các luật ngữ cảnh. Hiện module phủ task theo mục tiêu, hoàn tất/mở lại mục tiêu, gắn/bỏ gắn task gần nhất, hoàn tất task gần nhất và chuyển task sang tuần sau.
+- Đã làm: Navi hiểu câu ưu tiên tuần như “Tuần này anh ưu tiên apply, cần sửa CV cho vị trí mobile trước” thành một task gắn vào mục tiêu hiện hành. Câu hỏi như “Tuần này anh cần làm gì?” không bị hiểu nhầm là task.
+- An toàn và tốc độ: module chỉ nhận dạng mẫu có độ chắc chắn cao. Các ý định khác không tạo mutation từ suy đoán; chúng giữ luồng fallback hiện tại. Câu nhận dạng được xử lý nội bộ, không gọi AI.
+- Đã kiểm chứng: `npm run check` pass với 56 tests, typecheck và Worker build dry-run. Regression test phủ câu ưu tiên tuần, scope mục tiêu và không gọi AI fallback.

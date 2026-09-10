@@ -269,3 +269,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Quyết định: thói quen pilot là hành vi mỗi ngày. Con số thời lượng trong tên, như “Thiền trong 5 phút”, là ngưỡng của một ngày chứ không phải số lần cần cộng trong tuần.
 - Đã làm: habit mới và habit đang active đều dùng target 7 ngày; mỗi check-in habit ghi quantity 1 và chống trùng theo habit + ngày. Navi hiểu trực tiếp câu thiền/nghe, bảng tuần hiển thị ngưỡng mỗi ngày, `x/7 ngày` và chuỗi hiện tại.
 - Giới hạn: cadence hiện cố định hằng ngày. Lịch chỉ ngày thường, một số ngày/tuần hoặc thói quen theo lịch riêng là chặng tiếp theo, cần model dữ liệu cadence riêng thay vì tái dùng target tuần.
+
+## 2026-09-10 — Review mô hình mục tiêu, task và thói quen
+
+- Đã review tĩnh trạng thái `1191cd6`; kết quả trong `docs/reviews/domain-progress-review-2026-09-10.md`.
+- Phát hiện: thiếu liên kết task–goal; ngưỡng phút chưa được kiểm tra; cadence bị ép 7 ngày; streak chưa nối qua tuần; sửa note có thể mất chống trùng; legacy có nguy cơ hiện lặp/tái tạo sau xoá; tin tiến độ dài chưa phân trang.
+- Điều chỉnh nhận định: 42 tests trước đó chưa bao phủ các trường hợp này. Mô hình đang đủ cho pilot cơ bản, chưa đủ chắc để mở rộng; ưu tiên sửa phép tính và dữ liệu trước làm thêm chart.
+- Lượt này chỉ lưu kết quả review và thứ tự triển khai, không thay đổi runtime hoặc dữ liệu production.

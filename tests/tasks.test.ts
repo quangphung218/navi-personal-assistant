@@ -16,6 +16,7 @@ import checkinSelectionMigration from '../migrations/0015_checkin_selection.sql?
 import checkinOutcomesMigration from '../migrations/0016_checkin_outcomes.sql?raw';
 import expireCheckinSelectionsMigration from '../migrations/0017_expire_checkin_selections.sql?raw';
 import foundationsMigration from '../migrations/0018_goal_habit_foundations.sql?raw';
+import backfillHabitDatesMigration from '../migrations/0019_backfill_habit_checkin_dates.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -42,7 +43,7 @@ async function replies() {
 }
 beforeEach(async()=>{
   for(const table of ['checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -500,5 +501,35 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await tasks(db))[0]).toMatchObject({title:'Viết README',goal_title:'Ship Navi'});
     await receive(update(11,'/add Mua cà phê')); await processNext(db);
     expect((await tasks(db))[1]).toMatchObject({title:'Mua cà phê',goal_id:null});
+  });
+  it('preserves a habit measurement when correcting only its note',async()=>{
+    await link(); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi v2'],[4,'Apply 5 jobs'],[5,"Thiền trong 5'"],[6,'Nghe tiếng Anh'],[7,'đúng']] as const) {
+      await receive(update(id,text)); await processNext(db); await replies();
+    }
+    expect(await db.prepare("SELECT metric FROM weekly_plan_items WHERE kind='goal'").first()).toMatchObject({metric:'completion'});
+    await receive(update(8,'Hôm nay anh đã thiền 5 phút')); await processNext(db); await replies();
+    await receive(update(9,'/progress edit C1 Thiền buổi sáng')); await processNext(db); await replies();
+    await receive(update(10,'đúng')); await processNext(db); await replies();
+    expect(await db.prepare('SELECT note,actual_value,met_threshold FROM weekly_checkins WHERE id=1').first())
+      .toMatchObject({note:'Thiền buổi sáng',actual_value:5,met_threshold:1});
+    await receive(update(11,'/week status')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('1/7 ngày');
+  });
+  it('reads duration and weekly cadence together, and backfills a dated legacy run',async()=>{
+    await link(); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Thiền 5 phút, 3 buổi/tuần'],[6,'Nghe tiếng Anh'],[7,'đúng']] as const) {
+      await receive(update(id,text)); await processNext(db); await replies();
+    }
+    expect(await db.prepare("SELECT cadence,target_count,minimum_value FROM weekly_plan_items WHERE kind='habit' AND position=1").first())
+      .toMatchObject({cadence:'weekly',target_count:3,minimum_value:5});
+    const item=await db.prepare("SELECT id,week_start FROM weekly_plan_items WHERE kind='habit' AND position=1").first<{id:number;week_start:string}>();
+    const timestamp=Date.parse('2026-09-08T12:00:00+07:00');
+    await db.batch([
+      db.prepare("INSERT INTO weekly_progress_events(week_start,kind,label,normalized_label,source_update,occurred_at) VALUES(?,'run','2026-09-07','2026-09-07',88,?)").bind(item!.week_start,timestamp),
+      db.prepare("INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at) VALUES(?,?,1,'2026-09-07','2026-09-07',88,?)").bind(item!.week_start,item!.id,timestamp),
+    ]);
+    await db.prepare(backfillHabitDatesMigration).run();
+    expect(await db.prepare('SELECT local_date FROM weekly_checkins WHERE source_update=88').first()).toMatchObject({local_date:'2026-09-07'});
   });
 });

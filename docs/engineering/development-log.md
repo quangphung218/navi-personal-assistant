@@ -285,3 +285,19 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Dữ liệu: check-in habit có ngày địa phương và chống trùng theo habit/ngày; streak hằng ngày đọc qua các tuần với cùng habit. Xoá check-in legacy đồng thời xoá event nguồn để dữ liệu không tự materialize lại.
 - Đã áp dụng migration `0018_goal_habit_foundations.sql` trên D1 remote và deploy Processor version `bb5c88ac-8eb4-4de6-85f5-05a176b59088`.
 - Đã kiểm chứng: `npm run check` (43 tests, typecheck và build) pass trước deploy.
+
+## 2026-09-10 — Review lại sau nền dữ liệu 0018
+
+- Review tĩnh `191ea55`; chi tiết tại `docs/reviews/foundations-followup-2026-09-10.md`.
+- Phát hiện còn thiếu: sửa note thay đổi measurement; ngày/ID lịch sử chưa backfill; cadence có cả phút và lịch tuần đọc sai; query legacy vẫn thiếu source_update; streak hôm nay chưa check-in về 0; chưa có pending lượng thực hiện và phân trang tin dài.
+- Đính chính phạm vi lần trước: uniqueness ngày chỉ áp dụng bản ghi có local_date; streak qua tuần chỉ nối các mục đã liên kết cùng habit_id. Chưa chứng minh toàn bộ lịch sử cũ đã được chuyển đổi.
+- Lượt này lưu kết quả review và nhóm việc A/B/C, không đổi runtime, không deploy, không thao tác dữ liệu production. Test pass trước đây là bằng chứng cho bộ ca cũ, chưa phải các ca vừa phát hiện.
+
+## 2026-09-10 — Khắc phục độ tin cậy dữ liệu check-in
+
+- Đã sửa: sửa nội dung check-in không còn thay đổi số phút hoặc trạng thái đạt ngưỡng. Bằng chứng đo lường chỉ đổi khi có một luồng thay đổi measurement riêng.
+- Đã sửa: nhận diện thói quen tách thời lượng và nhịp. Ví dụ `Thiền 5 phút, 3 buổi/tuần` được lưu thành ba lần/tuần với mức tối thiểu năm phút; `mỗi ngày` ưu tiên nhịp hằng ngày. Số trong tên mục tiêu không còn tự biến thành chỉ tiêu.
+- Đã sửa: kế hoạch lưu cadence và ngưỡng ngay lúc xác nhận. Lịch sử legacy chỉ materialize lượt apply vào đúng cam kết apply; `/progress` lọc event legacy bằng toàn bộ check-in cùng nguồn để không hiện lặp vì giới hạn trang.
+- Dữ liệu: migration `0019_backfill_habit_checkin_dates.sql` đã điền `local_date` cho habit check-in cũ, ưu tiên ngày ISO của lượt chạy legacy rồi đến ngày Việt Nam của lúc ghi. `UPDATE OR IGNORE` giữ nguyên bản ghi nếu dữ liệu cũ trùng ngày, không xoá hoặc gộp bằng chứng.
+- Đã áp dụng migration remote và deploy Processor version `feed2fb0-f411-4270-b8a6-5368cf2ed7e4`.
+- Đã kiểm chứng: `npm run check` pass với 45 tests, typecheck và Worker build dry-run. Test mới bao phủ sửa note giữ measurement, cadence có cả thời lượng/lịch tuần và backfill ngày chạy legacy.

@@ -68,16 +68,17 @@ function targetFrom(text: string): number | undefined {
 }
 
 function checkInQuantity(text: string): number {
-  const withoutDate = normalize(text).replace(/ngày\s+\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{4})?/u,'');
-  return Math.max(1, Number(withoutDate.match(/\b(\d{1,3})\b/u)?.[1] ?? 1));
+  const quantity = normalize(text).match(/\b(\d{1,3})\s*(?:job|jobs|đơn|vị trí)\b/iu)?.[1];
+  return quantity ? Number(quantity) : 1;
 }
 
 function habitSpec(title: string): HabitSpec {
+  const daily = /(?:mỗi|hằng)\s+ngày/iu.test(title);
+  const weekly = title.match(/\b(\d{1,2})\s*(?:buổi|lần)(?:\s*(?:\/\s*tuần|mỗi\s+tuần))?/iu)?.[1];
   const duration = title.match(/\b(\d{1,3})\s*(?:phút|phut|min|['’])/iu)?.[1];
-  if (duration) return { cadence:'daily', target:7, minimumValue:Number(duration), minimumUnit:'minutes' };
-  const weekly = title.match(/\b(\d{1,2})\s*(?:buổi|lần|ngày)(?:\s*(?:\/\s*tuần|mỗi\s+tuần))?/iu)?.[1];
-  if (weekly) return { cadence:'weekly', target:Number(weekly) };
-  return { cadence:'daily', target:7 };
+  const cadence = weekly && !daily ? 'weekly' : 'daily';
+  return { cadence, target:cadence === 'weekly' ? Number(weekly) : 7,
+    ...(duration ? {minimumValue:Number(duration),minimumUnit:'minutes' as const} : {}) };
 }
 
 function habitRule(item: Pick<PlanItem,'cadence'|'minimum_value'|'minimum_unit'>): string {
@@ -86,7 +87,7 @@ function habitRule(item: Pick<PlanItem,'cadence'|'minimum_value'|'minimum_unit'>
 }
 
 function metricFor(title: string): { metric: 'count'|'completion'; target?: number } {
-  const target = targetFrom(title);
+  const target = /(?:apply|ứng tuyển)/iu.test(title) ? targetFrom(title) : undefined;
   return target ? { metric: 'count', target } : { metric: 'completion' };
 }
 
@@ -129,9 +130,11 @@ async function ensurePlanItems(db: D1Database, plan: WeeklyPlan, now: number): P
     db.prepare(`INSERT OR IGNORE INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
       SELECT e.week_start,i.id,1,e.label,e.normalized_label,e.source_update,e.occurred_at FROM weekly_progress_events e
       JOIN weekly_plan_items i ON i.week_start=e.week_start AND i.kind='commitment'
-      WHERE e.week_start=? AND e.kind='job_application'`).bind(plan.week_start),
-    db.prepare(`INSERT OR IGNORE INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
-      SELECT e.week_start,i.id,1,e.label,e.normalized_label,e.source_update,e.occurred_at FROM weekly_progress_events e
+      WHERE e.week_start=? AND e.kind='job_application'
+        AND (i.normalized_title LIKE '%apply%' OR i.normalized_title LIKE '%ứng tuyển%')
+        AND NOT EXISTS(SELECT 1 FROM weekly_checkins c WHERE c.source_update=e.source_update)`).bind(plan.week_start),
+    db.prepare(`INSERT OR IGNORE INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at,local_date,met_threshold)
+      SELECT e.week_start,i.id,1,e.label,e.normalized_label,e.source_update,e.occurred_at,e.label,1 FROM weekly_progress_events e
       JOIN weekly_plan_items i ON i.week_start=e.week_start AND i.kind='habit' AND i.normalized_title LIKE '%chạy%'
       WHERE e.week_start=? AND e.kind='run'`).bind(plan.week_start),
   ]);
@@ -455,8 +458,9 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           statements.push(db.prepare(`UPDATE weekly_plans SET status='archived' WHERE chat_id=? AND week_start<>? AND status='active' AND ${guard}`)
             .bind(draft.chat_id,draft.week_start,...args()));
           for (const item of planItemValues({ goal:draft.goal!, commitment:draft.commitment!, habit1:draft.habit1!, habit2:draft.habit2! })) {
-            statements.push(db.prepare(`INSERT INTO weekly_plan_items(week_start,kind,position,title,normalized_title,metric,target_count,created_at)
-              SELECT ?,?,?,?,?,?,?,? WHERE ${guard}`).bind(draft.week_start,item.kind,item.position,item.title,normalize(item.title),item.metric,item.target ?? null,now,...args()));
+            const habit = item.kind === 'habit' ? habitSpec(item.title) : undefined;
+            statements.push(db.prepare(`INSERT INTO weekly_plan_items(week_start,kind,position,title,normalized_title,metric,target_count,cadence,minimum_value,minimum_unit,created_at)
+              SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(draft.week_start,item.kind,item.position,item.title,normalize(item.title),item.metric,item.target ?? null,habit?.cadence ?? null,habit?.minimumValue ?? null,habit?.minimumUnit ?? null,now,...args()));
           }
           statements.push(db.prepare(`DELETE FROM weekly_drafts WHERE id=1 AND ${guard}`).bind(...args()));
           result = `Đã lưu kế hoạch tuần bắt đầu ${draft.week_start}:\n• Mục tiêu: ${draft.goal}\n• Cam kết: ${draft.commitment}\n• Thói quen 1: ${draft.habit1}\n• Thói quen 2: ${draft.habit2}`;
@@ -656,11 +660,12 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
             db.prepare(`SELECT c.id,c.note,c.source_update,i.kind AS item_kind,i.position AS item_position,i.title AS item_title
               FROM weekly_checkins c JOIN weekly_plan_items i ON i.id=c.plan_item_id
               WHERE c.week_start=? ORDER BY c.id DESC LIMIT 21`).bind(currentWeek).all<{id:number;note:string;source_update:number;item_kind:PlanItem['kind'];item_position:number;item_title:string}>(),
-            db.prepare(`SELECT id,kind,label,normalized_label FROM weekly_progress_events WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<ProgressEvent>(),
+            db.prepare(`SELECT e.id,e.kind,e.label,e.normalized_label,e.source_update FROM weekly_progress_events e
+              WHERE e.week_start=? AND NOT EXISTS(SELECT 1 FROM weekly_checkins c WHERE c.source_update=e.source_update)
+              ORDER BY e.id DESC LIMIT 21`).bind(currentWeek).all<ProgressEvent>(),
             habitStreaks(db, currentWeek, now),
           ]);
-          const ungrouped = events.results.filter(event => !checkins.results.some(checkin => checkin.source_update === event.source_update));
-          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true,streaks)}\n\n${formatCheckIns(checkins.results)}${ungrouped.length ? `\n\n${formatUngroupedProgressEvents(ungrouped)}` : ''}`;
+          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true,streaks)}\n\n${formatCheckIns(checkins.results)}${events.results.length ? `\n\n${formatUngroupedProgressEvents(events.results)}` : ''}`;
         } else if (command.kind === 'progressChange') {
           const pendingChange = await db.prepare("SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending' LIMIT 1")
             .bind(job.chat_id).first<ProgressChange>();
@@ -772,11 +777,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           statements.push(db.prepare(`UPDATE checkin_change_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,checkinChange.id,...args()));
           result = `Đã xoá C${checkin.id}: “${checkin.note}”.`;
         } else {
-          const actualValue = checkin.kind === 'habit' ? reportedHabitValue(checkinChange.new_note!,checkin) : undefined;
-          const metThreshold = checkin.kind === 'habit' && checkin.minimum_value !== null
-            ? actualValue === undefined ? 0 : Number(actualValue >= checkin.minimum_value) : null;
-          statements.push(db.prepare(`UPDATE weekly_checkins SET note=?,normalized_note=?,actual_value=?,actual_unit=?,met_threshold=? WHERE id=? AND ${guard}`)
-            .bind(checkinChange.new_note!,normalize(checkinChange.new_note!),actualValue ?? null,actualValue === undefined ? null : 'minutes',metThreshold,checkin.id,...args()));
+          statements.push(db.prepare(`UPDATE weekly_checkins SET note=?,normalized_note=? WHERE id=? AND ${guard}`)
+            .bind(checkinChange.new_note!,normalize(checkinChange.new_note!),checkin.id,...args()));
           statements.push(db.prepare(`UPDATE checkin_change_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,checkinChange.id,...args()));
           result = `Đã đổi C${checkin.id} thành “${checkinChange.new_note}”.`;
         }

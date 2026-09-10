@@ -146,8 +146,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await db.prepare('SELECT kind,title,metric,target_count FROM weekly_plan_items ORDER BY id').all()).results).toMatchObject([
       {kind:'goal',title:'Ship Navi MVP',metric:'completion',target_count:null},
       {kind:'commitment',title:'Apply 5 jobs',metric:'count',target_count:5},
-      {kind:'habit',title:'Chạy bộ 3 buổi',metric:'count',target_count:3},
-      {kind:'habit',title:'Đọc sách 2 buổi',metric:'count',target_count:2},
+      {kind:'habit',title:'Chạy bộ 3 buổi',metric:'count',target_count:7},
+      {kind:'habit',title:'Đọc sách 2 buổi',metric:'count',target_count:7},
     ]);
   });
   it('allows a weekly plan with one habit',async()=>{
@@ -215,7 +215,7 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(9,'_navi:checkin:select:8:1')); await processNext(db,now);
     expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Ship Navi”');
     await receive(update(10,dated)); await processNext(db,now);
-    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Chạy bộ 3 buổi”: 1/3');
+    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Chạy bộ 3 buổi”: 1/7 ngày');
     await receive(update(11,'/progress edit C1 Ship Navi production')); await processNext(db,now); await replies();
     await receive(update(12,'_navi:confirm:checkin:1')); await processNext(db,now);
     expect(await db.prepare('SELECT note FROM weekly_checkins WHERE id=1').first()).toMatchObject({note:'Ship Navi production'});
@@ -242,7 +242,23 @@ describe('task conversation on real D1 bindings',()=>{
     expect(events.results[0]).toMatchObject({note:'Anh vừa apply job Backend Developer'});
     const status=(await replies()).at(-1);
     expect(status).toContain('Cam kết apply: 1/5');
-    expect(status).toContain('Thói quen chạy bộ: 1/3');
+    expect(status).toContain('Thói quen chạy bộ: 1/7 ngày');
+  });
+  it('tracks habits as daily occurrences instead of interpreting minutes as repetitions',async()=>{
+    await link();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,"Thiền trong 5'"],[6,'Nghe tiếng Anh thụ động'],[7,'đúng']] as const){await receive(update(id,text));await processNext(db);await replies();}
+    expect((await db.prepare("SELECT target_count FROM weekly_plan_items WHERE kind='habit' ORDER BY position").all<{target_count:number}>()).results)
+      .toEqual([{target_count:7},{target_count:7}]);
+    await receive(update(8,'Hôm nay anh đã thiền 5 phút')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Thiền trong 5\'”: 1/7 ngày');
+    await receive(update(9,'Hôm nay anh đã thiền 5 phút')); await processNext(db); await replies();
+    await receive(update(10,'Hôm nay anh đã nghe tiếng Anh thụ động')); await processNext(db); await replies();
+    expect((await db.prepare('SELECT quantity FROM weekly_checkins ORDER BY id').all<{quantity:number}>()).results).toEqual([{quantity:1},{quantity:1}]);
+    await receive(update(11,'/progress')); await processNext(db);
+    const progress=(await replies()).at(-1) ?? '';
+    expect(progress).toContain('Mỗi ngày tối thiểu 5 phút');
+    expect(progress).toContain('1/7 ngày');
+    expect(progress).toContain('Chuỗi hiện tại: 1 ngày');
   });
   it('keeps legacy running history visible when the current plan no longer has a running habit',async()=>{
     await link();
@@ -305,7 +321,7 @@ describe('task conversation on real D1 bindings',()=>{
     const sent=await replies();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain('Apply 5 jobs 0/5');
-    expect(sent[0]).toContain('Chạy bộ 3 buổi 0/3');
+    expect(sent[0]).toContain('Chạy bộ 3 buổi 0/7 ngày');
     expect(await db.prepare("SELECT delivery_started_at,delivery_finished_at,delivery_status FROM job_metrics WHERE job_id=(SELECT job_id FROM weekly_reminders)").first())
       .toMatchObject({delivery_status:'sent'});
   });
@@ -328,7 +344,7 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(2,'/today'));await processNext(db,now);
     expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');
     expect(await enqueueWeeklyProgressReminder(db,reminder)).toBe(true);
-    expect((await replies()).at(-1)).toContain('Đọc sách 2 buổi 0/2');
+    expect((await replies()).at(-1)).toContain('Đọc sách 2 buổi 0/7 ngày');
     const sunday=Date.UTC(2026,8,13,12);
     expect(await enqueueWeeklyReview(db,sunday)).toBe(true);
     expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');

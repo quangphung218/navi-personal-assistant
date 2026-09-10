@@ -14,6 +14,10 @@ Ngày: 08/09/2026. Trạng thái: đầu vào sản phẩm đã ghi nhận; chư
 
 Anh mới nêu một thói quen; bản thử dùng đúng một thói quen này. Chưa có cam kết giờ cố định. Side project đã xác nhận là chatbot trong repo này. Chưa có yêu cầu hoàn thành trong một tuần hoặc chạy bao nhiêu km.
 
+## Cập nhật mô hình thói quen — 10/09/2026
+
+Trong pilot hiện hành, một thói quen là hành vi **mỗi ngày**, không phải task hoàn thành một lần hay chỉ tiêu số lần tuần. Mỗi habit giữ tên và ngưỡng tối thiểu của một ngày (ví dụ “Thiền trong 5 phút”); bảng tuần đếm số ngày đạt `x/7` và chuỗi ngày liên tiếp. Một check-in như “Hôm nay anh đã thiền 5 phút” ghi đúng một occurrence cho ngày đó; nhắn lại trong cùng ngày không cộng trùng. Mục tiêu và cam kết vẫn dùng metric hoàn thành hoặc số lượng riêng.
+
 ## Mô hình tuần mẫu
 
 Tuần tính thứ Hai–Chủ nhật, múi giờ Asia/Ho_Chi_Minh là mặc định đề xuất theo môi trường hiện tại, cần xác nhận khi onboarding. Chưa gắn tuần vào ngày cụ thể hoặc xếp lịch khi chưa có thời gian rảnh.

@@ -263,3 +263,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: thay danh sách phẳng trong `/progress` và `/today` bằng bảng tuần dễ quét trên điện thoại. Mục tiêu/cam kết/thói quen là các khối riêng; mục có chỉ tiêu số dùng thanh 8 ô `█░` kèm tỷ lệ; mục một lần dùng `✓` hoặc `○`.
 - Phạm vi: đây là visualization chữ từ dữ liệu D1 hiện có, không cần tạo ảnh chart hoặc thêm dịch vụ mới. Vì vậy nó phản hồi nhanh, dùng được trong chat và không tạo dữ liệu diễn giải ngoài trạng thái thực.
 - Đã kiểm chứng: regression test bảo đảm metric 0/5 hiện đủ tám ô trống và mục one-off hiện trạng thái chưa hoàn thành.
+
+## 2026-09-10 — Thói quen theo occurrence hằng ngày
+
+- Quyết định: thói quen pilot là hành vi mỗi ngày. Con số thời lượng trong tên, như “Thiền trong 5 phút”, là ngưỡng của một ngày chứ không phải số lần cần cộng trong tuần.
+- Đã làm: habit mới và habit đang active đều dùng target 7 ngày; mỗi check-in habit ghi quantity 1 và chống trùng theo habit + ngày. Navi hiểu trực tiếp câu thiền/nghe, bảng tuần hiển thị ngưỡng mỗi ngày, `x/7 ngày` và chuỗi hiện tại.
+- Giới hạn: cadence hiện cố định hằng ngày. Lịch chỉ ngày thường, một số ngày/tuần hoặc thói quen theo lịch riêng là chặng tiếp theo, cần model dữ liệu cadence riêng thay vì tái dùng target tuần.

@@ -78,7 +78,8 @@ export function parseCommand(text: string): Command {
     if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, ''), date:{day,month,year} };
   }
   if (/^(?:\/log\s+run|(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?)[.!]?$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
-  if (/^(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:xong|hoàn thành|làm xong|public|đăng|viết|đọc|học)\b[\s\S]{1,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
+  if (/^(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:xong|hoàn thành|làm xong|public|đăng|viết|đọc|học|thiền|nghe)\b[\s\S]{1,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
+  if (/^ngày\s+\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{4})?\s+(?:anh\s+)?(?:vừa|đã)\s+(?:thiền|nghe)\b[\s\S]{0,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   if (/^(?:đúng|đúng rồi|ok|okay|đồng ý|xác nhận|yes)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'confirm' };
   if (/^(?:không|không phải|hủy|huỷ|cancel|no)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'reject' };
   if (/^(?:cảm ơn|cam on|thanks|thank you)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'thanks' };

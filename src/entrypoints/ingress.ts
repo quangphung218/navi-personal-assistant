@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { equalSecret, limitedJson } from '../adapters/security';
-import { answerCallback, updateSchema } from '../adapters/telegram';
+import { answerCallback, sendTyping, updateSchema } from '../adapters/telegram';
 import { accept, ownerFor } from '../modules/execution/store';
 
 const app = new Hono<{ Bindings: CloudflareBindings }>();
@@ -28,6 +28,7 @@ app.post('/webhooks/telegram', async c => {
     if (accepted) {
       // A failed publication is recovered from durable jobs by cron.
       c.executionCtx.waitUntil(c.env.JOBS_QUEUE.send({wake:true}).catch(() => { console.error(JSON.stringify({event:'dispatch_failed'})); }));
+      if (!update.callback_query) c.executionCtx.waitUntil(sendTyping(c.env.TELEGRAM_BOT_TOKEN, String(message.chat.id)));
     }
     if (update.callback_query) c.executionCtx.waitUntil(answerCallback(c.env.TELEGRAM_BOT_TOKEN, update.callback_query.id));
     return c.json({ok:true});

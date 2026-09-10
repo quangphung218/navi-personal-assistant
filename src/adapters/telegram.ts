@@ -41,6 +41,16 @@ export function telegramSender(token: string): Sender {
   };
 }
 
+export async function sendTyping(token: string, chatId: string): Promise<void> {
+  if (!token) return;
+  try {
+    await fetch(`https://api.telegram.org/bot${token}/sendChatAction`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ chat_id: chatId, action: 'typing' }), signal: AbortSignal.timeout(5_000),
+    });
+  } catch { /* Typing is best-effort and never blocks a durable reply. */ }
+}
+
 export async function answerCallback(token: string, callbackQueryId: string): Promise<void> {
   if (!token) return;
   try {

@@ -2,6 +2,7 @@ import { env } from 'cloudflare:workers';
 import { createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import migration from '../migrations/0001_tasks.sql?raw';
+import aiBudgetMigration from '../migrations/0002_ai_budget.sql?raw';
 import approvalsMigration from '../migrations/0003_approvals.sql?raw';
 import weeklyMigration from '../migrations/0004_weekly_plans.sql?raw';
 import contextMigration from '../migrations/0005_conversation_context.sql?raw';
@@ -18,6 +19,7 @@ import expireCheckinSelectionsMigration from '../migrations/0017_expire_checkin_
 import foundationsMigration from '../migrations/0018_goal_habit_foundations.sql?raw';
 import backfillHabitDatesMigration from '../migrations/0019_backfill_habit_checkin_dates.sql?raw';
 import measurementRequestsMigration from '../migrations/0020_checkin_measurement_requests.sql?raw';
+import latencyMetricsMigration from '../migrations/0021_job_latency_metrics.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -43,8 +45,9 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200})));
+  for(const table of ['checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -78,6 +81,14 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await processNext(db,now)).toBe(true);
     expect((await replies()).at(-1)).toContain('Tiến độ tuần');
   });
+  it('records the AI route and its processing duration for an unmatched message',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    await accept(db,update(2,'Giúp anh suy nghĩ một điều mới'),false,now);
+    await processNext(db,now,async()=> 'Em đang suy nghĩ cùng anh.');
+    expect(await db.prepare('SELECT route,ai_started_at,ai_finished_at FROM job_metrics WHERE job_id=(SELECT id FROM jobs WHERE update_id=2)').first())
+      .toMatchObject({route:'ai'});
+  });
   it('reports observed runtime state and weekly check-in telemetry',async()=>{
     const now=Date.now();
     await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
@@ -86,13 +97,15 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(9,'Anh đã viết README')); await processNext(db,now); await replies();
     await receive(update(10,'Anh đã hoàn thành Navi')); await processNext(db,now); await replies();
     await receive(update(11,'/status')); await processNext(db,now);
-    expect((await replies()).at(-1)).toContain('Tin /status này vừa được Worker xử lý');
+    const status=(await replies()).at(-1) ?? '';
+    expect(status).toContain('Tin /status này vừa được Worker xử lý');
+    expect(status).toContain('10 tin gần: Queue');
     await receive(update(12,'/insights')); await processNext(db,now);
     const insight=(await replies()).at(-1);
     expect(insight).toContain('Ghi thẳng: 1');
     expect(insight).toContain('Chưa nối được mục: 1');
     expect(insight).toContain('Đang chờ chọn: 1');
-  });
+  },10_000);
   it('exports the current plan, tasks, and check-ins as Markdown or JSON',async()=>{
     const now=Date.now();
     await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();

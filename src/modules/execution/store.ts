@@ -417,16 +417,25 @@ async function todaySummary(db: D1Database, chatId: string, now: number): Promis
 
 async function systemStatusSummary(db: D1Database, chatId: string, now: number): Promise<string> {
   const currentWeek = weekStart(now);
-  const [plan, preference, openTasks, latest] = await Promise.all([
+  const [plan, preference, openTasks, latest, latency] = await Promise.all([
     db.prepare("SELECT goal FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(currentWeek,chatId).first<{goal:string}>(),
     db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(chatId).first<ReminderPreference>(),
     db.prepare("SELECT COUNT(*) AS count FROM tasks WHERE status='open'").first<{count:number}>(),
     db.prepare(`SELECT c.note,c.occurred_at FROM weekly_checkins c JOIN weekly_plans p ON p.week_start=c.week_start
       WHERE p.chat_id=? AND p.status='active' ORDER BY c.occurred_at DESC,c.id DESC LIMIT 1`).bind(chatId).first<{note:string;occurred_at:number}>(),
+    db.prepare(`SELECT ROUND(AVG(processing_started_at-queued_at)) AS queue_ms,
+      ROUND(AVG(processing_finished_at-processing_started_at)) AS processing_ms,
+      ROUND(AVG(delivery_finished_at-delivery_started_at)) AS delivery_ms,
+      ROUND(AVG(CASE WHEN route='ai' THEN ai_finished_at-ai_started_at END)) AS ai_ms,
+      SUM(CASE WHEN route='ai' THEN 1 ELSE 0 END) AS ai_count
+      FROM (SELECT m.* FROM job_metrics m JOIN jobs j ON j.id=m.job_id WHERE j.chat_id=? ORDER BY m.job_id DESC LIMIT 10)`).bind(chatId)
+      .first<{queue_ms:number|null;processing_ms:number|null;delivery_ms:number|null;ai_ms:number|null;ai_count:number|null}>(),
   ]);
   const reminders = (preference?.weekly_progress_enabled ?? 1) === 1
     ? `bật lúc ${String(preference?.delivery_hour ?? 20).padStart(2,'0')}:00` : 'đang tắt';
-  return `Trạng thái Navi\n• Tin /status này vừa được Worker xử lý.\n• Kế hoạch tuần: ${plan ? `đang theo dõi “${plan.goal}”` : 'chưa có'}\n• Task mở: ${openTasks?.count ?? 0}\n• Nhắc tiến độ: ${reminders}\n• Check-in gần nhất: ${latest ? `“${latest.note}” (${formatLocalTime(latest.occurred_at)})` : 'chưa có'}`;
+  const milliseconds = (value:number|null|undefined) => value === null || value === undefined ? 'chưa đủ dữ liệu' : `${value}ms`;
+  const performance = latency ? `• 10 tin gần: Queue ${milliseconds(latency.queue_ms)} · xử lý ${milliseconds(latency.processing_ms)} · gửi ${milliseconds(latency.delivery_ms)}${latency.ai_count ? ` · AI ${milliseconds(latency.ai_ms)} (${latency.ai_count} tin)` : ''}` : '';
+  return `Trạng thái Navi\n• Tin /status này vừa được Worker xử lý.\n• Kế hoạch tuần: ${plan ? `đang theo dõi “${plan.goal}”` : 'chưa có'}\n• Task mở: ${openTasks?.count ?? 0}\n• Nhắc tiến độ: ${reminders}\n${performance}\n• Check-in gần nhất: ${latest ? `“${latest.note}” (${formatLocalTime(latest.occurred_at)})` : 'chưa có'}`;
 }
 
 async function insightsSummary(db: D1Database, chatId: string, now: number): Promise<string> {
@@ -495,6 +504,9 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       .map(m => `${m.direction === 'inbound' ? 'Anh' : 'Navi'}: ${m.text.slice(0, 500)}`).join('\n');
     let result = '';
     let replyMarkup: ReplyMarkup | undefined;
+    let route = 'local';
+    let aiStartedAt: number|undefined;
+    let aiFinishedAt: number|undefined;
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
@@ -1000,11 +1012,20 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       result = `Em hiểu là anh muốn thêm task: “${title}”.\nAnh bấm nút để xác nhận hoặc bỏ qua.`;
       replyMarkup = confirmationButtons(`task:${job.update_id}`);
     }
-    else if (assistant && await reserveAi(db, now)) result = await assistant(job.text, recent);
-    else result = assistant ? 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /help để xem các lệnh chắc chắn.' : 'Em chưa hiểu chắc yêu cầu này.\n' + help;
+    else if (assistant && await reserveAi(db, now)) {
+      route = 'ai';
+      aiStartedAt = Date.now();
+      result = await assistant(job.text, recent);
+      aiFinishedAt = Date.now();
+    } else {
+      route = assistant ? 'ai_budget_limited' : 'unrecognized';
+      result = assistant ? 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /help để xem các lệnh chắc chắn.' : 'Em chưa hiểu chắc yêu cầu này.\n' + help;
+    }
     // Lease serializes task writers; job result and outbox commit with the task change.
     statements.push(db.prepare(`INSERT INTO deliveries(job_id,chat_id,text,reply_markup) SELECT ?,?,?,? WHERE ${guard}`).bind(job.id, job.chat_id, result, replyMarkup ? JSON.stringify(replyMarkup) : null, ...args()));
     statements.push(db.prepare(`INSERT INTO conversation_messages(chat_id,direction,text,created_at) SELECT ?,'outbound',?,? WHERE ${guard}`).bind(job.chat_id, result, now, ...args()));
+    statements.push(db.prepare(`UPDATE job_metrics SET route=?,ai_started_at=?,ai_finished_at=? WHERE job_id=? AND ${guard}`)
+      .bind(route,aiStartedAt ?? null,aiFinishedAt ?? null,job.id,...args()));
     statements.push(db.prepare(`UPDATE jobs SET status=?,result=? WHERE id=? AND ${guard}`)
       .bind(job.attempts >= 3 ? 'failed' : 'done', result, job.id, ...args()));
     const completed = await db.batch(statements);

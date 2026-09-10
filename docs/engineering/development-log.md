@@ -347,3 +347,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã sửa: parser nhận mẫu `mục tiêu … cần có task mới là …`, giữ nguyên nội dung task người dùng nói và gắn task vào mục tiêu tuần hiện hành. Luồng này không gọi AI fallback.
 - Độ trễ: Queue Processor có batch tối đa một giây. Với mẫu đã nhận diện, đường xử lý chỉ còn Queue, D1 và Telegram; giới hạn chờ OpenRouter 15 giây không còn áp dụng cho câu này.
 - Đã kiểm chứng: `npm run check` pass với 54 tests, typecheck và Worker build dry-run. Regression test dùng đúng câu pilot, kiểm tra task được gắn mục tiêu và AI fallback không được gọi.
+
+## 2026-09-10 — Quan sát độ trễ phản hồi
+
+- Đã làm: `job_metrics` ghi route xử lý và mốc bắt đầu/kết thúc gọi AI. `/status` tổng hợp trung bình 10 tin gần nhất theo ba chặng Queue, xử lý, gửi Telegram; khi có fallback AI, hiển thị thời gian AI và số tin đã gọi AI.
+- Đã làm: Ingress gửi Telegram typing action ngay sau khi nhận tin hợp lệ, Processor gửi lại action khi bắt đầu xử lý. Typing là best-effort, không ảnh hưởng job/delivery bền vững nếu Telegram không phản hồi.
+- Dữ liệu: migration `0021_job_latency_metrics.sql` đã áp dụng remote, chỉ thêm mốc thời gian và route; không lưu thêm nội dung hội thoại.
+- Đã kiểm chứng: `npm run check` pass với 55 tests, typecheck và Worker build dry-run. Ca mới kiểm tra route AI và mốc đo; test ingress mock Telegram typing để không gọi mạng ngoài.

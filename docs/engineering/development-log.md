@@ -257,3 +257,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: `/progress` hiển thị rõ từng mục là `Mục tiêu`, `Cam kết` hoặc `Thói quen N`; mỗi check-in cũng ghi mục mà nó thuộc về. Điều này giúp phân biệt kết quả theo kế hoạch với lịch sử chưa gắn mục.
 - Đã sửa: dòng tóm tắt apply/chạy bộ chỉ xuất hiện khi chính kế hoạch tuần có cam kết apply hoặc thói quen chạy bộ; không còn tạo cảm giác Navi đang theo dõi một thói quen không có trong kế hoạch.
 - Đã kiểm chứng: regression test kiểm tra một plan không có chạy bộ vẫn gắn nhãn đủ mục tiêu/cam kết/thói quen và không hiện bộ đếm chạy bộ.
+
+## 2026-09-10 — Bảng tiến độ trực quan trong Telegram
+
+- Đã làm: thay danh sách phẳng trong `/progress` và `/today` bằng bảng tuần dễ quét trên điện thoại. Mục tiêu/cam kết/thói quen là các khối riêng; mục có chỉ tiêu số dùng thanh 8 ô `█░` kèm tỷ lệ; mục một lần dùng `✓` hoặc `○`.
+- Phạm vi: đây là visualization chữ từ dữ liệu D1 hiện có, không cần tạo ảnh chart hoặc thêm dịch vụ mới. Vì vậy nó phản hồi nhanh, dùng được trong chat và không tạo dữ liệu diễn giải ngoài trạng thái thực.
+- Đã kiểm chứng: regression test bảo đảm metric 0/5 hiện đủ tám ô trống và mục one-off hiện trạng thái chưa hoàn thành.

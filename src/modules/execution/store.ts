@@ -157,11 +157,13 @@ async function stageCheckIn(db: D1Database, statements: D1PreparedStatement[], g
 function formatPlanItems(items: PlanItem[], showAll = false): string {
   const visible = showAll ? items : items.filter(item => item.metric === 'completion' || item.completed > 0);
   if (!visible.length) return '';
-  return `\n\nKế hoạch đang theo dõi:\n${visible.map(item => {
-    const progress = item.metric === 'count' ? `${item.completed}/${item.target_count}` : item.status === 'completed' ? 'đã hoàn thành' : 'chưa hoàn thành';
+  return `\n\nBảng tiến độ tuần:\n${visible.map(item => {
     const category = item.kind === 'goal' ? 'Mục tiêu' : item.kind === 'commitment' ? 'Cam kết' : `Thói quen ${item.position}`;
-    return `• ${category}: ${item.title} — ${progress}`;
-  }).join('\n')}`;
+    const progress = item.metric === 'count'
+      ? `${'█'.repeat(Math.min(8, Math.floor(item.completed / (item.target_count ?? 1) * 8)))}${'░'.repeat(Math.max(0, 8 - Math.min(8, Math.floor(item.completed / (item.target_count ?? 1) * 8))))} ${item.completed}/${item.target_count}`
+      : item.status === 'completed' ? '✓ Đã hoàn thành' : '○ Chưa hoàn thành';
+    return `${category}\n${item.title}\n${progress}`;
+  }).join('\n\n')}`;
 }
 
 function progressCounts(items: PlanItem[]): { applications: number; runs: number } {

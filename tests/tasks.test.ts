@@ -259,7 +259,9 @@ describe('task conversation on real D1 bindings',()=>{
     expect(progress).toContain('Chạy bộ ngày 08/09');
     expect(progress).toContain('Mục tiêu: Tìm việc');
     expect(progress).toContain('Cam kết: Apply 5 job');
-    expect(progress).toContain('Thói quen 1: Thiền 5 buổi');
+    expect(progress).toContain('Thói quen 1\nThiền 5 buổi');
+    expect(progress).toContain('░░░░░░░░ 0/5');
+    expect(progress).toContain('○ Chưa hoàn thành');
     expect(progress).not.toContain('Thói quen chạy bộ:');
   });
   it('records an explicitly dated run without calling AI',async()=>{
@@ -324,12 +326,12 @@ describe('task conversation on real D1 bindings',()=>{
     await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at)
       VALUES('2026-09-07','123','Public Navi lên GitHub','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách 2 buổi',?)`).bind(now).run();
     await receive(update(2,'/today'));await processNext(db,now);
-    expect((await replies()).at(-1)).toContain('Public Navi lên GitHub — chưa hoàn thành');
+    expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');
     expect(await enqueueWeeklyProgressReminder(db,reminder)).toBe(true);
     expect((await replies()).at(-1)).toContain('Đọc sách 2 buổi 0/2');
     const sunday=Date.UTC(2026,8,13,12);
     expect(await enqueueWeeklyReview(db,sunday)).toBe(true);
-    expect((await replies()).at(-1)).toContain('Public Navi lên GitHub — chưa hoàn thành');
+    expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');
   });
   it('queues one daily briefing and one Sunday review',async()=>{
     const morning=Date.UTC(2026,8,10,1), sunday=Date.UTC(2026,8,13,12);

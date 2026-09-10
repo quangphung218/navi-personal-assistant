@@ -1,4 +1,4 @@
-export type Command = { kind: 'add'; title: string } | { kind: 'done'; reference: string }
+export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { kind: 'done'; reference: string }
   | { kind: 'list'; includeDone: boolean } | { kind: 'confirm'; target?: string } | { kind: 'reject'; target?: string }
   | { kind: 'week' } | { kind: 'weekStatus' } | { kind: 'progressList' }
   | { kind: 'today' } | { kind: 'review'; carry?: string }
@@ -27,8 +27,10 @@ export function parseCommand(text: string): Command {
     : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
-    const title = add[1]!.trim().replace(/\s+/g, ' ');
-    return title.length > 0 && title.length <= 180 ? { kind: 'add', title } : { kind: 'unknown' };
+    const raw = add[1]!.trim().replace(/\s+/g, ' ');
+    const scoped = raw.match(/^(?:mục tiêu|goal)\s*:\s*(.+)$/iu);
+    const title = (scoped?.[1] ?? raw).trim();
+    return title.length > 0 && title.length <= 180 ? { kind: 'add', title, goalScoped:Boolean(scoped) } : { kind: 'unknown' };
   }
   if (/^(?:đánh dấu|đánh dấu là)\s+(?:việc đó|task đó|cái đó)\s+(?:xong|hoàn thành)$/iu.test(value)) return { kind: 'done', reference: 'đó' };
   const done = value.match(/^(?:\/done(?:@\w+)?\s+|(?:xong|hoàn thành)\s+)(.+)$/iu);
@@ -79,7 +81,11 @@ export function parseCommand(text: string): Command {
   }
   if (/^(?:\/log\s+run|(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?)[.!]?$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   if (/^(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:xong|hoàn thành|làm xong|public|đăng|viết|đọc|học|thiền|nghe)\b[\s\S]{1,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
-  if (/^ngày\s+\d{1,2}[\/-]\d{1,2}(?:[\/-]\d{4})?\s+(?:anh\s+)?(?:vừa|đã)\s+(?:thiền|nghe)\b[\s\S]{0,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
+  const datedHabit = value.match(/^ngày\s+(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?\s+(?:anh\s+)?(?:vừa|đã)\s+(?:thiền|nghe)\b[\s\S]{0,180}$/iu);
+  if (datedHabit) {
+    const day=Number(datedHabit[1]), month=Number(datedHabit[2]), year=datedHabit[3] ? Number(datedHabit[3]) : undefined;
+    if (day>=1&&day<=31&&month>=1&&month<=12) return { kind:'checkIn', text:value.replace(/[.!?]+$/u,''), date:{day,month,year} };
+  }
   if (/^(?:đúng|đúng rồi|ok|okay|đồng ý|xác nhận|yes)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'confirm' };
   if (/^(?:không|không phải|hủy|huỷ|cancel|no)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'reject' };
   if (/^(?:cảm ơn|cam on|thanks|thank you)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'thanks' };
@@ -91,4 +97,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/insights — xem mức Navi hiểu check-in tuần này\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\n\nTask\n/add Viết README\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;
+export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/insights — xem mức Navi hiểu check-in tuần này\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\n\nTask\n/add Viết README — việc riêng\n/add mục tiêu: Viết README — việc cho mục tiêu tuần\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;

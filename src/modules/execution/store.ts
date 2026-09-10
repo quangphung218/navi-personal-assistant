@@ -3,7 +3,7 @@ import type { ReplyMarkup, TelegramUpdate, Sender } from '../../adapters/telegra
 import type { Assistant } from '../../adapters/openrouter';
 
 type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number };
-type Task = { id: string; title: string; status: 'open' | 'done'; revision: number; due_at: number|null };
+type Task = { id: string; title: string; status: 'open' | 'done'; revision: number; due_at?: number|null; goal_id?: number|null; goal_title?: string|null };
 type Approval = { id: number; source_update: number; title: string; status: 'pending' };
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
 type WeeklyPlan = { week_start: string; chat_id: string; goal: string; commitment: string; habit1: string; habit2: string };
@@ -12,9 +12,9 @@ type ProgressEvent = { id: number; kind: 'job_application'|'run'; label: string;
 type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename'; new_label: string|null };
 type CheckInChange = { id: number; checkin_id: number; action: 'delete'|'rename'; new_note: string|null };
 type CheckInSelection = { id: number; week_start: string; source_update: number; text: string; candidate_item_ids: string; status: 'pending'|'selected'|'rejected'; expires_at: number|null };
-type PlanItem = { id: number; kind: 'goal'|'commitment'|'habit'; position: number; title: string; normalized_title: string; metric: 'count'|'completion'; target_count: number|null; status: 'active'|'completed'; completed: number };
+type PlanItem = { id: number; kind: 'goal'|'commitment'|'habit'; position: number; title: string; normalized_title: string; metric: 'count'|'completion'; target_count: number|null; status: 'active'|'completed'; completed: number; goal_id: number|null; habit_id: number|null; cadence: 'daily'|'weekly'|null; minimum_value: number|null; minimum_unit: string|null };
 type StagedCheckIn = { item: PlanItem; text: string; weekStart: string; sourceUpdate: number; occurredAt: number; chatId: string; outcome: 'recorded'|'selected' };
-const HABIT_DAYS_PER_WEEK = 7;
+type HabitSpec = { cadence: 'daily'|'weekly'; target: number; minimumValue?: number; minimumUnit?: 'minutes' };
 
 function localDate(now: number): string {
   return new Date(now + 7 * 60 * 60 * 1000).toISOString().slice(0, 10);
@@ -72,9 +72,17 @@ function checkInQuantity(text: string): number {
   return Math.max(1, Number(withoutDate.match(/\b(\d{1,3})\b/u)?.[1] ?? 1));
 }
 
-function dailyHabitRule(title: string): string {
+function habitSpec(title: string): HabitSpec {
   const duration = title.match(/\b(\d{1,3})\s*(?:phút|phut|min|['’])/iu)?.[1];
-  return duration ? `Mỗi ngày tối thiểu ${duration} phút` : 'Mỗi ngày';
+  if (duration) return { cadence:'daily', target:7, minimumValue:Number(duration), minimumUnit:'minutes' };
+  const weekly = title.match(/\b(\d{1,2})\s*(?:buổi|lần|ngày)(?:\s*(?:\/\s*tuần|mỗi\s+tuần))?/iu)?.[1];
+  if (weekly) return { cadence:'weekly', target:Number(weekly) };
+  return { cadence:'daily', target:7 };
+}
+
+function habitRule(item: Pick<PlanItem,'cadence'|'minimum_value'|'minimum_unit'>): string {
+  const frequency = item.cadence === 'weekly' ? 'Theo lịch tuần' : 'Mỗi ngày';
+  return item.minimum_value && item.minimum_unit === 'minutes' ? `${frequency}, tối thiểu ${item.minimum_value} phút` : frequency;
 }
 
 function metricFor(title: string): { metric: 'count'|'completion'; target?: number } {
@@ -88,14 +96,15 @@ function planItemValues(plan: Pick<WeeklyPlan,'goal'|'commitment'|'habit1'|'habi
     { kind:'commitment' as const, position:0, title:plan.commitment },
     { kind:'habit' as const, position:1, title:plan.habit1 },
     { kind:'habit' as const, position:2, title:plan.habit2 },
-  ].filter(item => item.title.trim().length > 0).map(item => ({ ...item, ...(item.kind === 'habit'
-    ? { metric:'count' as const, target:HABIT_DAYS_PER_WEEK }
-    : metricFor(item.title)) }));
+  ].filter(item => item.title.trim().length > 0).map(item => {
+    const spec = item.kind === 'habit' ? habitSpec(item.title) : undefined;
+    return { ...item, ...(spec ? { metric:'count' as const, ...spec } : metricFor(item.title)) };
+  });
 }
 
 async function planItems(db: D1Database, week: string): Promise<PlanItem[]> {
-  return (await db.prepare(`SELECT i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,
-    COALESCE(SUM(c.quantity),0) AS completed FROM weekly_plan_items i LEFT JOIN weekly_checkins c ON c.plan_item_id=i.id
+  return (await db.prepare(`SELECT i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,i.goal_id,i.habit_id,i.cadence,i.minimum_value,i.minimum_unit,
+    COALESCE(SUM(CASE WHEN i.kind='habit' THEN COALESCE(c.met_threshold,1)*c.quantity ELSE c.quantity END),0) AS completed FROM weekly_plan_items i LEFT JOIN weekly_checkins c ON c.plan_item_id=i.id
     WHERE i.week_start=? GROUP BY i.id ORDER BY CASE i.kind WHEN 'goal' THEN 0 WHEN 'commitment' THEN 1 ELSE 2 END,i.position`).bind(week).all<PlanItem>()).results;
 }
 
@@ -103,8 +112,19 @@ async function ensurePlanItems(db: D1Database, plan: WeeklyPlan, now: number): P
   const existing = await planItems(db, plan.week_start);
   if (!existing.length) await db.batch(planItemValues(plan).map(item => db.prepare(`INSERT OR IGNORE INTO weekly_plan_items(week_start,kind,position,title,normalized_title,metric,target_count,created_at)
     VALUES(?,?,?,?,?,?,?,?)`).bind(plan.week_start,item.kind,item.position,item.title,normalize(item.title),item.metric,item.target ?? null,now)));
-  await db.prepare("UPDATE weekly_plan_items SET metric='count',target_count=? WHERE week_start=? AND kind='habit' AND (metric<>'count' OR target_count<>?)")
-    .bind(HABIT_DAYS_PER_WEEK,plan.week_start,HABIT_DAYS_PER_WEEK).run();
+  await db.prepare('INSERT OR IGNORE INTO goals(chat_id,title,normalized_title,created_at) VALUES(?,?,?,?)')
+    .bind(plan.chat_id,plan.goal,normalize(plan.goal),now).run();
+  const goal = await db.prepare('SELECT id FROM goals WHERE chat_id=? AND normalized_title=?').bind(plan.chat_id,normalize(plan.goal)).first<{id:number}>();
+  if (goal) await db.prepare("UPDATE weekly_plan_items SET goal_id=? WHERE week_start=? AND kind='goal'").bind(goal.id,plan.week_start).run();
+  for (const [position,title] of [[1,plan.habit1],[2,plan.habit2]] as const) {
+    if (!title.trim()) continue;
+    const spec = habitSpec(title);
+    await db.prepare(`INSERT OR IGNORE INTO habit_definitions(chat_id,title,normalized_title,cadence,target_occurrences,minimum_value,minimum_unit,created_at)
+      VALUES(?,?,?,?,?,?,?,?)`).bind(plan.chat_id,title,normalize(title),spec.cadence,spec.target,spec.minimumValue ?? null,spec.minimumUnit ?? null,now).run();
+    const habit = await db.prepare('SELECT id FROM habit_definitions WHERE chat_id=? AND normalized_title=?').bind(plan.chat_id,normalize(title)).first<{id:number}>();
+    await db.prepare(`UPDATE weekly_plan_items SET metric='count',target_count=?,habit_id=?,cadence=?,minimum_value=?,minimum_unit=?
+      WHERE week_start=? AND kind='habit' AND position=?`).bind(spec.target,habit?.id ?? null,spec.cadence,spec.minimumValue ?? null,spec.minimumUnit ?? null,plan.week_start,position).run();
+  }
   await db.batch([
     db.prepare(`INSERT OR IGNORE INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
       SELECT e.week_start,i.id,1,e.label,e.normalized_label,e.source_update,e.occurred_at FROM weekly_progress_events e
@@ -149,6 +169,12 @@ function checkInDate(text: string, recordedAt: number): string {
   return iso ?? localDate(recordedAt);
 }
 
+function reportedHabitValue(text: string, item: Pick<PlanItem,'minimum_value'|'minimum_unit'>): number|undefined {
+  if (item.minimum_unit !== 'minutes') return undefined;
+  const value = text.match(/\b(\d{1,3})\s*(?:phút|phut|min|['’])/iu)?.[1];
+  return value ? Number(value) : undefined;
+}
+
 function previousDate(date: string): string {
   const value = new Date(`${date}T00:00:00Z`);
   value.setUTCDate(value.getUTCDate() - 1);
@@ -156,12 +182,15 @@ function previousDate(date: string): string {
 }
 
 async function habitStreaks(db: D1Database, week: string, now: number): Promise<Map<number,number>> {
-  const checkins = (await db.prepare(`SELECT c.plan_item_id,c.note,c.occurred_at FROM weekly_checkins c
-    JOIN weekly_plan_items i ON i.id=c.plan_item_id WHERE c.week_start=? AND i.kind='habit'`).bind(week).all<{plan_item_id:number;note:string;occurred_at:number}>()).results;
+  const checkins = (await db.prepare(`SELECT current_item.id AS plan_item_id,c.local_date,c.note,c.occurred_at FROM weekly_plan_items current_item
+    JOIN weekly_plan_items historical_item ON historical_item.habit_id=current_item.habit_id
+    JOIN weekly_checkins c ON c.plan_item_id=historical_item.id
+    WHERE current_item.week_start=? AND current_item.kind='habit' AND current_item.cadence='daily' AND COALESCE(c.met_threshold,1)=1`)
+    .bind(week).all<{plan_item_id:number;local_date:string|null;note:string;occurred_at:number}>()).results;
   const datesByHabit = new Map<number,Set<string>>();
   for (const checkin of checkins) {
     const dates = datesByHabit.get(checkin.plan_item_id) ?? new Set<string>();
-    dates.add(checkInDate(checkin.note,checkin.occurred_at));
+    dates.add(checkin.local_date ?? checkInDate(checkin.note,checkin.occurred_at));
     datesByHabit.set(checkin.plan_item_id,dates);
   }
   const streaks = new Map<number,number>();
@@ -173,16 +202,26 @@ async function habitStreaks(db: D1Database, week: string, now: number): Promise<
   return streaks;
 }
 
-async function stageCheckIn(db: D1Database, statements: D1PreparedStatement[], guard: string, args: () => (string|number)[], checkIn: StagedCheckIn): Promise<{ already: boolean; progress: string }> {
+async function stageCheckIn(db: D1Database, statements: D1PreparedStatement[], guard: string, args: () => (string|number)[], checkIn: StagedCheckIn): Promise<{ already: boolean; progress: string; needsMeasurement?: boolean; metThreshold?: boolean; actualValue?: number }> {
   const quantity = checkIn.item.kind === 'habit' ? 1 : checkIn.item.metric === 'count' ? checkInQuantity(checkIn.text) : 1;
   const key = checkInKey(checkIn.item,checkIn.text,checkIn.occurredAt);
-  const existing = await db.prepare('SELECT id FROM weekly_checkins WHERE source_update=? OR (plan_item_id=? AND normalized_note=?)')
-    .bind(checkIn.sourceUpdate,checkIn.item.id,key).first<{id:number}>();
-  const completed = checkIn.item.completed + quantity;
-  const progress = checkIn.item.metric === 'count' ? `${completed}/${checkIn.item.target_count}${checkIn.item.kind === 'habit' ? ' ngày' : ''}` : 'đã hoàn thành';
-  if (existing) return { already:true, progress };
-  statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
-    SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(checkIn.weekStart,checkIn.item.id,quantity,checkIn.text,key,checkIn.sourceUpdate,checkIn.occurredAt,...args()));
+  const localDay = checkIn.item.kind === 'habit' ? checkInDate(checkIn.text,checkIn.occurredAt) : null;
+  const actualValue = checkIn.item.kind === 'habit' ? reportedHabitValue(checkIn.text,checkIn.item) : undefined;
+  if (checkIn.item.kind === 'habit' && checkIn.item.minimum_value !== null && actualValue === undefined) {
+    return { already:false, progress:`cần ghi số phút để đối chiếu mức ${checkIn.item.minimum_value} phút`, needsMeasurement:true };
+  }
+  const metThreshold = checkIn.item.kind === 'habit' ? (checkIn.item.minimum_value === null || (actualValue ?? 0) >= checkIn.item.minimum_value) : undefined;
+  const existing = await db.prepare('SELECT id,met_threshold FROM weekly_checkins WHERE source_update=? OR (plan_item_id=? AND local_date=?) OR (plan_item_id=? AND normalized_note=?)')
+    .bind(checkIn.sourceUpdate,checkIn.item.id,localDay,checkIn.item.id,key).first<{id:number;met_threshold:number|null}>();
+  const completed = checkIn.item.completed + (metThreshold === false ? 0 : quantity);
+  const habitUnit = checkIn.item.cadence === 'weekly' ? ' lần' : ' ngày';
+  const progress = checkIn.item.metric === 'count' ? `${completed}/${checkIn.item.target_count}${checkIn.item.kind === 'habit' ? habitUnit : ''}` : 'đã hoàn thành';
+  if (existing && !(checkIn.item.kind === 'habit' && existing.met_threshold === 0 && metThreshold)) return { already:true, progress };
+  if (existing) {
+    statements.push(db.prepare(`UPDATE weekly_checkins SET quantity=?,note=?,normalized_note=?,source_update=?,occurred_at=?,actual_value=?,actual_unit='minutes',met_threshold=1
+      WHERE id=? AND ${guard}`).bind(quantity,checkIn.text,key,checkIn.sourceUpdate,checkIn.occurredAt,actualValue ?? null,existing.id,...args()));
+  } else statements.push(db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at,local_date,actual_value,actual_unit,met_threshold)
+    SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${guard}`).bind(checkIn.weekStart,checkIn.item.id,quantity,checkIn.text,key,checkIn.sourceUpdate,checkIn.occurredAt,localDay,actualValue ?? null,actualValue === undefined ? null : 'minutes',metThreshold === undefined ? null : Number(metThreshold),...args()));
   if (checkIn.item.metric === 'completion' || (checkIn.item.target_count !== null && completed >= checkIn.item.target_count)) {
     statements.push(db.prepare(`UPDATE weekly_plan_items SET status='completed' WHERE id=? AND ${guard}`).bind(checkIn.item.id,...args()));
   }
@@ -193,7 +232,7 @@ async function stageCheckIn(db: D1Database, statements: D1PreparedStatement[], g
     statements.push(db.prepare(`UPDATE checkin_outcomes SET outcome='selected' WHERE chat_id=? AND source_update=? AND outcome='ambiguous' AND ${guard}`)
       .bind(checkIn.chatId,checkIn.sourceUpdate,...args()));
   }
-  return { already:false, progress };
+  return { already:false, progress, metThreshold, actualValue };
 }
 
 function formatPlanItems(items: PlanItem[], showAll = false, streaks?: Map<number,number>): string {
@@ -202,10 +241,10 @@ function formatPlanItems(items: PlanItem[], showAll = false, streaks?: Map<numbe
   return `\n\nBảng tiến độ tuần:\n${visible.map(item => {
     const category = item.kind === 'goal' ? 'Mục tiêu' : item.kind === 'commitment' ? 'Cam kết' : `Thói quen ${item.position}`;
     const progress = item.metric === 'count'
-      ? `${'█'.repeat(Math.min(8, Math.floor(item.completed / (item.target_count ?? 1) * 8)))}${'░'.repeat(Math.max(0, 8 - Math.min(8, Math.floor(item.completed / (item.target_count ?? 1) * 8))))} ${item.completed}/${item.target_count}`
+      ? `${'█'.repeat(Math.min(8, Math.floor(item.completed / (item.target_count ?? 1) * 8)))}${'░'.repeat(Math.max(0, 8 - Math.min(8, Math.floor(item.completed / (item.target_count ?? 1) * 8))))} ${item.completed}/${item.target_count}${item.kind === 'habit' ? item.cadence === 'weekly' ? ' lần' : ' ngày' : ''}`
       : item.status === 'completed' ? '✓ Đã hoàn thành' : '○ Chưa hoàn thành';
     const habitDetail = item.kind === 'habit'
-      ? `\n${dailyHabitRule(item.title)}\n${progress} ngày${streaks ? `\nChuỗi hiện tại: ${streaks.get(item.id) ?? 0} ngày` : ''}`
+      ? `\n${habitRule(item)}\n${progress}${streaks && item.cadence === 'daily' ? `\nChuỗi hiện tại: ${streaks.get(item.id) ?? 0} ngày` : ''}`
       : `\n${progress}`;
     return `${category}\n${item.title}${habitDetail}`;
   }).join('\n\n')}`;
@@ -235,11 +274,11 @@ function formatUngroupedProgressEvents(events: ProgressEvent[]): string {
 function formatProgress(plan: WeeklyPlan, applications: number, runs: number): string {
   const applicationTarget = /apply|ứng tuyển/iu.test(plan.commitment) ? targetFrom(plan.commitment) : undefined;
   const runHabit = [plan.habit1, plan.habit2].find(value => /chạy|run/iu.test(value));
-  const runTarget = runHabit ? HABIT_DAYS_PER_WEEK : undefined;
+  const runTarget = runHabit ? habitSpec(runHabit).target : undefined;
   const ratio = (count: number, target?: number) => target ? `${count}/${target}` : `${count} lần đã ghi`;
   const tracked = [
     applicationTarget ? `• Cam kết apply: ${ratio(applications, applicationTarget)}` : undefined,
-    runHabit ? `• Thói quen chạy bộ: ${ratio(runs, runTarget)} ngày` : undefined,
+    runHabit ? `• Thói quen chạy bộ: ${ratio(runs, runTarget)}${habitSpec(runHabit).cadence === 'daily' ? ' ngày' : ' lần'}` : undefined,
   ].filter(Boolean).join('\n');
   return `Tiến độ tuần bắt đầu ${plan.week_start}:\n• Mục tiêu: ${plan.goal}\n• Cam kết: ${plan.commitment}${tracked ? `\n${tracked}` : ''}\n\nCác kết quả được ghi theo xác nhận của anh.`;
 }
@@ -303,7 +342,8 @@ export async function accept(db: D1Database, update: TelegramUpdate, bootstrap: 
 }
 
 export async function tasks(db: D1Database, includeDone = false): Promise<Task[]> {
-  const result = await db.prepare(`SELECT id,title,status,revision FROM tasks ${includeDone ? '' : "WHERE status='open'"} ORDER BY created_at,id LIMIT 21`).all<Task>();
+  const result = await db.prepare(`SELECT t.id,t.title,t.status,t.revision,t.due_at,t.goal_id,g.title AS goal_title
+    FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id ${includeDone ? '' : "WHERE t.status='open'"} ORDER BY t.created_at,t.id LIMIT 21`).all<Task>();
   return result.results;
 }
 
@@ -311,13 +351,13 @@ async function todaySummary(db: D1Database, chatId: string, now: number): Promis
   const date = localDate(now), start = Date.parse(`${date}T00:00:00+07:00`), end = start + 24 * 60 * 60 * 1000;
   const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
     .bind(weekStart(now), chatId).first<WeeklyPlan>();
-  const due = (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE status='open' AND due_at>=? AND due_at<? ORDER BY due_at,id LIMIT 6")
+  const due = (await db.prepare("SELECT t.id,t.title,t.status,t.revision,t.due_at,t.goal_id,g.title AS goal_title FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id WHERE t.status='open' AND t.due_at>=? AND t.due_at<? ORDER BY t.due_at,t.id LIMIT 6")
     .bind(start,end).all<Task>()).results;
-  const unscheduled = due.length < 6 ? (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE status='open' AND due_at IS NULL ORDER BY created_at,id LIMIT ?")
+  const unscheduled = due.length < 6 ? (await db.prepare("SELECT t.id,t.title,t.status,t.revision,t.due_at,t.goal_id,g.title AS goal_title FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id WHERE t.status='open' AND t.due_at IS NULL ORDER BY t.created_at,t.id LIMIT ?")
     .bind(6-due.length).all<Task>()).results : [];
   const carryovers = (await db.prepare(`SELECT task_id FROM weekly_task_carryovers WHERE week_start=?`).bind(weekStart(now)).all<{task_id:string}>()).results;
   const carried = new Set(carryovers.map(item=>item.task_id));
-  const taskLines = [...due,...unscheduled].map(task => `• ${task.id}: ${task.title}${carried.has(task.id) ? ' — giữ từ tuần trước' : task.due_at ? ` — ${formatLocalTime(task.due_at)}` : ''}`);
+  const taskLines = [...due,...unscheduled].map(task => `• ${task.id}: ${task.title}${carried.has(task.id) ? ' — giữ từ tuần trước' : task.due_at ? ` — ${formatLocalTime(task.due_at)}` : ''}${task.goal_title ? ` — mục tiêu: ${task.goal_title}` : ' — việc riêng'}`);
   if (!plan) return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}\n\nAnh nhắn /week để lập kế hoạch tuần.`;
   const items = await ensurePlanItems(db, plan, now), counts = progressCounts(items), streaks = await habitStreaks(db, plan.week_start, now);
   return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true,streaks)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}`;
@@ -401,7 +441,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const command = parseCommand(job.text);
     const recent = (await db.prepare("SELECT direction,text FROM conversation_messages WHERE chat_id=? ORDER BY created_at DESC,id DESC LIMIT 12").bind(job.chat_id).all<{direction:'inbound'|'outbound';text:string}>()).results.reverse()
       .map(m => `${m.direction === 'inbound' ? 'Anh' : 'Navi'}: ${m.text.slice(0, 500)}`).join('\n');
-    let result: string;
+    let result = '';
     let replyMarkup: ReplyMarkup | undefined;
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
@@ -531,9 +571,12 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           const item = candidates[0]!;
           const occurredAt = command.date ? Date.parse(`${datedRunLabel(command.date,now)!}T12:00:00+07:00`) : now;
           const staged = await stageCheckIn(db,statements,guard,args,{item,text:command.text,weekStart:currentWeek,sourceUpdate:job.update_id,occurredAt,chatId:job.chat_id,outcome:'recorded'});
-          if (staged.already) result = `Cập nhật này đã được ghi trước đó cho “${item.title}”.`;
+          if (staged.needsMeasurement) result = `Để ghi thói quen “${item.title}”, anh cho em biết đã làm bao nhiêu phút nhé.`;
+          else if (staged.already) result = `Cập nhật này đã được ghi trước đó cho “${item.title}”.`;
           else {
-            result = `Đã ghi nhận cho “${item.title}”: ${staged.progress}.`;
+            result = staged.metThreshold === false
+              ? `Đã ghi ${staged.actualValue}/${item.minimum_value} phút cho “${item.title}”. Ngày này chưa tính vào tiến độ.`
+              : `Đã ghi nhận cho “${item.title}”: ${staged.progress}.`;
             replyMarkup = progressButton;
           }
         }
@@ -545,8 +588,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       try { const value: unknown = selection ? JSON.parse(selection.candidate_item_ids) : []; candidateIds = Array.isArray(value) && value.every(Number.isInteger) ? value : []; } catch { candidateIds = []; }
       const currentPlan = selection ? await db.prepare("SELECT week_start FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(selection.week_start,job.chat_id).first<{week_start:string}>() : undefined;
       const expired = Boolean(selection && ((selection.expires_at ?? 0) <= now || !currentPlan));
-      const item = selection && !expired && candidateIds.includes(command.itemId) ? await db.prepare(`SELECT i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,
-        COALESCE(SUM(c.quantity),0) AS completed FROM weekly_plan_items i LEFT JOIN weekly_checkins c ON c.plan_item_id=i.id
+      const item = selection && !expired && candidateIds.includes(command.itemId) ? await db.prepare(`SELECT i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,i.goal_id,i.habit_id,i.cadence,i.minimum_value,i.minimum_unit,
+        COALESCE(SUM(CASE WHEN i.kind='habit' THEN COALESCE(c.met_threshold,1)*c.quantity ELSE c.quantity END),0) AS completed FROM weekly_plan_items i LEFT JOIN weekly_checkins c ON c.plan_item_id=i.id
         WHERE i.id=? AND i.week_start=? GROUP BY i.id`).bind(command.itemId,selection.week_start).first<PlanItem>() : undefined;
       if (!selection || !item) {
         if (selection && expired) statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,selection.id,...args()));
@@ -554,11 +597,14 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       }
       else {
         const staged = await stageCheckIn(db,statements,guard,args,{item,text:selection.text,weekStart:selection.week_start,sourceUpdate:selection.source_update,occurredAt:now,chatId:job.chat_id,outcome:'selected'});
-        if (staged.already) result = `Cập nhật này đã được ghi cho “${item.title}”.`;
+        if (staged.needsMeasurement) result = `Để ghi thói quen “${item.title}”, anh cho em biết đã làm bao nhiêu phút nhé.`;
+        else if (staged.already) result = `Cập nhật này đã được ghi cho “${item.title}”.`;
         else {
           statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='selected',selected_item_id=?,decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
             .bind(item.id,now,selection.id,...args()));
-          result = `Đã ghi nhận cho “${item.title}”: ${staged.progress}.`;
+          result = staged.metThreshold === false
+            ? `Đã ghi ${staged.actualValue}/${item.minimum_value} phút cho “${item.title}”. Ngày này chưa tính vào tiến độ.`
+            : `Đã ghi nhận cho “${item.title}”: ${staged.progress}.`;
           replyMarkup = progressButton;
         }
       }
@@ -578,7 +624,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       }
     } else if (command.kind === 'weekStatus' || command.kind === 'progressList' || command.kind === 'progress' || command.kind === 'progressChange') {
       const currentWeek = weekStart(now);
-      const plan = await db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+      const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
         .bind(currentWeek, job.chat_id).first<WeeklyPlan>();
       if (!plan) result = 'Tuần này chưa có kế hoạch đã xác nhận. Anh nhắn /week để tạo nhé.';
       else {
@@ -647,9 +693,23 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       }
     } else if (command.kind === 'add') {
       const id = `T${job.update_id}`;
-      statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)
-        .bind(id, command.title, normalize(command.title), job.update_id, now, ...args()));
-      result = `Đã thêm ${id}: ${command.title}\nKhi xong, anh nhắn /done ${id}.`;
+      let goalId: number|null = null, goalTitle: string|undefined, canAdd = true;
+      if (command.goalScoped) {
+        const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+          .bind(weekStart(now),job.chat_id).first<WeeklyPlan>();
+        if (!plan) { result = 'Tuần này chưa có mục tiêu để gắn việc. Anh nhắn /week để lập kế hoạch, hoặc dùng /add để thêm việc riêng.'; canAdd = false; }
+        else {
+          const goal = (await ensurePlanItems(db,plan,now)).find(item => item.kind === 'goal');
+          goalId = goal?.goal_id ?? null;
+          goalTitle = goal?.title;
+          if (!goalId) { result = 'Em chưa tạo được mục tiêu tuần để gắn việc. Anh thử lại giúp em.'; canAdd = false; }
+        }
+      }
+      if (canAdd) {
+        statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at,goal_id) SELECT ?,?,?,?,?,? WHERE ${guard}`)
+          .bind(id, command.title, normalize(command.title), job.update_id, now, goalId, ...args()));
+        result = `Đã thêm ${id}: ${command.title}${goalTitle ? `\nGắn với mục tiêu: ${goalTitle}.` : '\nĐây là việc riêng.'}\nKhi xong, anh nhắn /done ${id}.`;
+      }
     } else if (command.kind === 'export') {
       result = await exportSummary(db,job.chat_id,now,command.format);
     } else if (command.kind === 'systemStatus') {
@@ -662,7 +722,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       result = pendingApproval ? `Em đang chờ anh xác nhận task: ${pendingApproval.title}` : pendingTask ? `Task gần nhất đã được lưu: ${pendingTask.id} — ${pendingTask.title}` : 'Hiện chưa có task nào được lưu.';
     } else if (command.kind === 'list') {
       const list = await tasks(db, command.includeDone);
-      result = list.length ? list.slice(0, 20).map(t => `${t.status === 'done' ? '✓' : '○'} ${t.id}: ${t.title.slice(0, 140)}`).join('\n')
+      result = list.length ? list.slice(0, 20).map(t => `${t.status === 'done' ? '✓' : '○'} ${t.id}: ${t.title.slice(0, 140)}${t.goal_title ? ` — mục tiêu: ${t.goal_title}` : ' — việc riêng'}`).join('\n')
         + (list.length > 20 ? '\nĐang hiển thị 20 việc đầu; hoàn thành bớt để xem các việc tiếp theo.' : '') : 'Chưa có công việc nào được ghi nhận trong danh sách này.';
     } else if (command.kind === 'done') {
       let reference = command.reference;
@@ -691,8 +751,10 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           ${command.target?.startsWith('checkin:') ? 'AND checkin_id=?' : ''} ORDER BY created_at DESC LIMIT 1`)
           .bind(job.chat_id,...(command.target?.startsWith('checkin:') ? [Number(command.target.slice(8))] : [])).first<CheckInChange>();
       if (checkinChange) {
-        const checkin = await db.prepare(`SELECT c.id,c.note,c.plan_item_id FROM weekly_checkins c JOIN weekly_plans p ON p.week_start=c.week_start
-          WHERE c.id=? AND p.chat_id=? AND p.status='active'`).bind(checkinChange.checkin_id,job.chat_id).first<{id:number;note:string;plan_item_id:number}>();
+        const checkin = await db.prepare(`SELECT c.id,c.note,c.plan_item_id,c.source_update,i.kind,i.minimum_value,i.minimum_unit
+          FROM weekly_checkins c JOIN weekly_plans p ON p.week_start=c.week_start JOIN weekly_plan_items i ON i.id=c.plan_item_id
+          WHERE c.id=? AND p.chat_id=? AND p.status='active'`).bind(checkinChange.checkin_id,job.chat_id)
+          .first<{id:number;note:string;plan_item_id:number;source_update:number;kind:PlanItem['kind'];minimum_value:number|null;minimum_unit:string|null}>();
         if (command.kind === 'reject') {
           statements.push(db.prepare(`UPDATE checkin_change_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,checkinChange.id,...args()));
           result = 'Đã giữ nguyên check-in.';
@@ -701,15 +763,20 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           result = 'Check-in này không còn tồn tại nên em không thay đổi thêm.';
         } else if (checkinChange.action === 'delete') {
           statements.push(db.prepare(`DELETE FROM weekly_checkins WHERE id=? AND ${guard}`).bind(checkin.id,...args()));
+          statements.push(db.prepare(`DELETE FROM weekly_progress_events WHERE source_update=? AND ${guard}`).bind(checkin.source_update,...args()));
           statements.push(db.prepare(`UPDATE weekly_plan_items SET status=CASE
             WHEN metric='completion' AND EXISTS(SELECT 1 FROM weekly_checkins WHERE plan_item_id=?) THEN 'completed'
             WHEN metric='completion' THEN 'active'
-            WHEN COALESCE((SELECT SUM(quantity) FROM weekly_checkins WHERE plan_item_id=?),0)>=target_count THEN 'completed'
+            WHEN COALESCE((SELECT SUM(CASE WHEN COALESCE(met_threshold,1)=1 THEN quantity ELSE 0 END) FROM weekly_checkins WHERE plan_item_id=?),0)>=target_count THEN 'completed'
             ELSE 'active' END WHERE id=? AND ${guard}`).bind(checkin.plan_item_id,checkin.plan_item_id,checkin.plan_item_id,...args()));
           statements.push(db.prepare(`UPDATE checkin_change_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,checkinChange.id,...args()));
           result = `Đã xoá C${checkin.id}: “${checkin.note}”.`;
         } else {
-          statements.push(db.prepare(`UPDATE weekly_checkins SET note=?,normalized_note=? WHERE id=? AND ${guard}`).bind(checkinChange.new_note!,normalize(checkinChange.new_note!),checkin.id,...args()));
+          const actualValue = checkin.kind === 'habit' ? reportedHabitValue(checkinChange.new_note!,checkin) : undefined;
+          const metThreshold = checkin.kind === 'habit' && checkin.minimum_value !== null
+            ? actualValue === undefined ? 0 : Number(actualValue >= checkin.minimum_value) : null;
+          statements.push(db.prepare(`UPDATE weekly_checkins SET note=?,normalized_note=?,actual_value=?,actual_unit=?,met_threshold=? WHERE id=? AND ${guard}`)
+            .bind(checkinChange.new_note!,normalize(checkinChange.new_note!),actualValue ?? null,actualValue === undefined ? null : 'minutes',metThreshold,checkin.id,...args()));
           statements.push(db.prepare(`UPDATE checkin_change_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,checkinChange.id,...args()));
           result = `Đã đổi C${checkin.id} thành “${checkinChange.new_note}”.`;
         }
@@ -831,7 +898,7 @@ export async function enqueueWeeklyProgressReminder(db: D1Database, now = Date.n
   if ((preference?.weekly_progress_enabled ?? 1) !== 1 || localHour(now) !== hour) return false;
   const items = await ensurePlanItems(db, plan, now);
   const pending = items.filter(item => item.metric === 'completion' ? item.status !== 'completed' : item.completed < (item.target_count ?? 0))
-    .map(item => `${item.title} ${item.metric === 'completion' ? '— chưa hoàn thành' : `${item.completed}/${item.target_count}${item.kind === 'habit' ? ' ngày' : ''}`}`);
+    .map(item => `${item.title} ${item.metric === 'completion' ? '— chưa hoàn thành' : `${item.completed}/${item.target_count}${item.kind === 'habit' ? item.cadence === 'weekly' ? ' lần' : ' ngày' : ''}`}`);
   if (!pending.length) return false;
   const updateId = -Number(date.replaceAll('-',''));
   const text = `Nhắc tiến độ hôm nay (${date.slice(8,10)}/${date.slice(5,7)}):\n${pending.map(item=>`• ${item}`).join('\n')}\n\nAnh cập nhật khi hoàn thành, hoặc dùng /reminders off để tắt nhắc.`;

@@ -15,6 +15,7 @@ import checkinCorrectionsMigration from '../migrations/0014_checkin_corrections.
 import checkinSelectionMigration from '../migrations/0015_checkin_selection.sql?raw';
 import checkinOutcomesMigration from '../migrations/0016_checkin_outcomes.sql?raw';
 import expireCheckinSelectionsMigration from '../migrations/0017_expire_checkin_selections.sql?raw';
+import foundationsMigration from '../migrations/0018_goal_habit_foundations.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -40,14 +41,15 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
     expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','progress','insights','export','add','list','done','reminders','status','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
     expect(parseCommand('/progress')).toEqual({kind:'progressList'});
+    expect(parseCommand('/add mục tiêu: Viết README')).toEqual({kind:'add',title:'Viết README',goalScoped:true});
     expect(parseCommand('/status')).toEqual({kind:'systemStatus'});
     expect(parseCommand('/insights')).toEqual({kind:'insights'});
     expect(parseCommand('/export json')).toEqual({kind:'export',format:'json'});
@@ -146,8 +148,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await db.prepare('SELECT kind,title,metric,target_count FROM weekly_plan_items ORDER BY id').all()).results).toMatchObject([
       {kind:'goal',title:'Ship Navi MVP',metric:'completion',target_count:null},
       {kind:'commitment',title:'Apply 5 jobs',metric:'count',target_count:5},
-      {kind:'habit',title:'Chạy bộ 3 buổi',metric:'count',target_count:7},
-      {kind:'habit',title:'Đọc sách 2 buổi',metric:'count',target_count:7},
+      {kind:'habit',title:'Chạy bộ 3 buổi',metric:'count',target_count:3},
+      {kind:'habit',title:'Đọc sách 2 buổi',metric:'count',target_count:2},
     ]);
   });
   it('allows a weekly plan with one habit',async()=>{
@@ -215,7 +217,7 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(9,'_navi:checkin:select:8:1')); await processNext(db,now);
     expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Ship Navi”');
     await receive(update(10,dated)); await processNext(db,now);
-    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Chạy bộ 3 buổi”: 1/7 ngày');
+    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Chạy bộ 3 buổi”: 1/3 lần');
     await receive(update(11,'/progress edit C1 Ship Navi production')); await processNext(db,now); await replies();
     await receive(update(12,'_navi:confirm:checkin:1')); await processNext(db,now);
     expect(await db.prepare('SELECT note FROM weekly_checkins WHERE id=1').first()).toMatchObject({note:'Ship Navi production'});
@@ -242,7 +244,7 @@ describe('task conversation on real D1 bindings',()=>{
     expect(events.results[0]).toMatchObject({note:'Anh vừa apply job Backend Developer'});
     const status=(await replies()).at(-1);
     expect(status).toContain('Cam kết apply: 1/5');
-    expect(status).toContain('Thói quen chạy bộ: 1/7 ngày');
+    expect(status).toContain('Thói quen chạy bộ: 1/3 lần');
   });
   it('tracks habits as daily occurrences instead of interpreting minutes as repetitions',async()=>{
     await link();
@@ -256,7 +258,7 @@ describe('task conversation on real D1 bindings',()=>{
     expect((await db.prepare('SELECT quantity FROM weekly_checkins ORDER BY id').all<{quantity:number}>()).results).toEqual([{quantity:1},{quantity:1}]);
     await receive(update(11,'/progress')); await processNext(db);
     const progress=(await replies()).at(-1) ?? '';
-    expect(progress).toContain('Mỗi ngày tối thiểu 5 phút');
+    expect(progress).toContain('Mỗi ngày, tối thiểu 5 phút');
     expect(progress).toContain('1/7 ngày');
     expect(progress).toContain('Chuỗi hiện tại: 1 ngày');
   });
@@ -321,7 +323,7 @@ describe('task conversation on real D1 bindings',()=>{
     const sent=await replies();
     expect(sent).toHaveLength(1);
     expect(sent[0]).toContain('Apply 5 jobs 0/5');
-    expect(sent[0]).toContain('Chạy bộ 3 buổi 0/7 ngày');
+    expect(sent[0]).toContain('Chạy bộ 3 buổi 0/3 lần');
     expect(await db.prepare("SELECT delivery_started_at,delivery_finished_at,delivery_status FROM job_metrics WHERE job_id=(SELECT job_id FROM weekly_reminders)").first())
       .toMatchObject({delivery_status:'sent'});
   });
@@ -344,7 +346,7 @@ describe('task conversation on real D1 bindings',()=>{
     await receive(update(2,'/today'));await processNext(db,now);
     expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');
     expect(await enqueueWeeklyProgressReminder(db,reminder)).toBe(true);
-    expect((await replies()).at(-1)).toContain('Đọc sách 2 buổi 0/7 ngày');
+    expect((await replies()).at(-1)).toContain('Đọc sách 2 buổi 0/2 lần');
     const sunday=Date.UTC(2026,8,13,12);
     expect(await enqueueWeeklyReview(db,sunday)).toBe(true);
     expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');
@@ -483,5 +485,20 @@ describe('task conversation on real D1 bindings',()=>{
   it('does not accept arbitrary ambiguous conversation as a mutation',()=>{
     expect(parseCommand('xóa tất cả')).toEqual({kind:'unknown'});
     expect(parseCommand('Thêm việc '+ 'a'.repeat(181))).toEqual({kind:'unknown'});
+  });
+  it('keeps a measured habit below its minimum out of progress and links goal tasks explicitly',async()=>{
+    await link(); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,"Thiền trong 5'"],[6,'Nghe tiếng Anh'],[7,'đúng']] as const) {
+      await receive(update(id,text)); await processNext(db); await replies();
+    }
+    await receive(update(8,'Hôm nay anh đã thiền 2 phút')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('Ngày này chưa tính vào tiến độ');
+    expect(await db.prepare("SELECT completed FROM (SELECT COALESCE(SUM(CASE WHEN met_threshold=1 THEN quantity ELSE 0 END),0) AS completed FROM weekly_checkins)").first()).toMatchObject({completed:0});
+    await receive(update(9,'Hôm nay anh đã thiền 5 phút')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('Đã ghi nhận cho “Thiền trong 5\'”: 1/7 ngày');
+    await receive(update(10,'/add mục tiêu: Viết README')); await processNext(db);
+    expect((await tasks(db))[0]).toMatchObject({title:'Viết README',goal_title:'Ship Navi'});
+    await receive(update(11,'/add Mua cà phê')); await processNext(db);
+    expect((await tasks(db))[1]).toMatchObject({title:'Mua cà phê',goal_id:null});
   });
 });

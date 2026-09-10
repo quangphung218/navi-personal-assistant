@@ -276,3 +276,12 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Phát hiện: thiếu liên kết task–goal; ngưỡng phút chưa được kiểm tra; cadence bị ép 7 ngày; streak chưa nối qua tuần; sửa note có thể mất chống trùng; legacy có nguy cơ hiện lặp/tái tạo sau xoá; tin tiến độ dài chưa phân trang.
 - Điều chỉnh nhận định: 42 tests trước đó chưa bao phủ các trường hợp này. Mô hình đang đủ cho pilot cơ bản, chưa đủ chắc để mở rộng; ưu tiên sửa phép tính và dữ liệu trước làm thêm chart.
 - Lượt này chỉ lưu kết quả review và thứ tự triển khai, không thay đổi runtime hoặc dữ liệu production.
+
+## 2026-09-10 — Nền dữ liệu mục tiêu, thói quen và việc riêng
+
+- Đã làm: thêm `goals` và `habit_definitions` làm nguồn dữ liệu chuẩn theo chat; task có thể gắn `goal_id`, còn mục kế hoạch tuần giữ liên kết đến goal/habit và cadence riêng.
+- Thói quen: Navi nhận `3 buổi` hoặc `2 lần` là chỉ tiêu tuần (`x/n lần`); thói quen không có lịch riêng vẫn là hằng ngày (`x/7 ngày`). Thói quen có ngưỡng, như `Thiền trong 5'`, ghi giá trị thực tế; dưới 5 phút được lưu minh bạch nhưng chưa cộng tiến độ. Cập nhật cùng ngày có thể thay bản ghi dưới ngưỡng bằng lần đủ ngưỡng.
+- Task: `/add` tạo việc riêng; `/add mục tiêu: ...` gắn task với mục tiêu tuần hiện hành. `/list` và `/today` ghi rõ phạm vi để tránh lẫn lộn.
+- Dữ liệu: check-in habit có ngày địa phương và chống trùng theo habit/ngày; streak hằng ngày đọc qua các tuần với cùng habit. Xoá check-in legacy đồng thời xoá event nguồn để dữ liệu không tự materialize lại.
+- Đã áp dụng migration `0018_goal_habit_foundations.sql` trên D1 remote và deploy Processor version `bb5c88ac-8eb4-4de6-85f5-05a176b59088`.
+- Đã kiểm chứng: `npm run check` (43 tests, typecheck và build) pass trước deploy.

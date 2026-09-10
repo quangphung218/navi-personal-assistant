@@ -241,8 +241,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect(events.results).toHaveLength(2);
     expect(events.results[0]).toMatchObject({note:'Anh vừa apply job Backend Developer'});
     const status=(await replies()).at(-1);
-    expect(status).toContain('Apply: 1/5');
-    expect(status).toContain('Chạy bộ: 1/3');
+    expect(status).toContain('Cam kết apply: 1/5');
+    expect(status).toContain('Thói quen chạy bộ: 1/3');
   });
   it('keeps legacy running history visible when the current plan no longer has a running habit',async()=>{
     await link();
@@ -257,6 +257,10 @@ describe('task conversation on real D1 bindings',()=>{
     expect(progress).toContain('Lịch sử đã ghi, chưa gắn với mục kế hoạch hiện tại');
     expect(progress).toContain('Chạy bộ ngày 07/09');
     expect(progress).toContain('Chạy bộ ngày 08/09');
+    expect(progress).toContain('Mục tiêu: Tìm việc');
+    expect(progress).toContain('Cam kết: Apply 5 job');
+    expect(progress).toContain('Thói quen 1: Thiền 5 buổi');
+    expect(progress).not.toContain('Thói quen chạy bộ:');
   });
   it('records an explicitly dated run without calling AI',async()=>{
     const now=Date.now();

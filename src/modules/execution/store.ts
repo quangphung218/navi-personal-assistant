@@ -159,7 +159,8 @@ function formatPlanItems(items: PlanItem[], showAll = false): string {
   if (!visible.length) return '';
   return `\n\nKế hoạch đang theo dõi:\n${visible.map(item => {
     const progress = item.metric === 'count' ? `${item.completed}/${item.target_count}` : item.status === 'completed' ? 'đã hoàn thành' : 'chưa hoàn thành';
-    return `• ${item.title} — ${progress}`;
+    const category = item.kind === 'goal' ? 'Mục tiêu' : item.kind === 'commitment' ? 'Cam kết' : `Thói quen ${item.position}`;
+    return `• ${category}: ${item.title} — ${progress}`;
   }).join('\n')}`;
 }
 
@@ -169,9 +170,12 @@ function progressCounts(items: PlanItem[]): { applications: number; runs: number
   return { applications, runs };
 }
 
-function formatCheckIns(checkins: {id:number; note:string; source_update?:number}[]): string {
+function formatCheckIns(checkins: {id:number; note:string; source_update?:number; item_kind?:PlanItem['kind']; item_position?:number; item_title?:string}[]): string {
   if (!checkins.length) return 'Chưa có check-in nào trong tuần này.';
-  return `Check-in tuần này:\n${checkins.slice(0,20).map(checkin => `• C${checkin.id} · ${checkin.note.slice(0,140)}`).join('\n')}\n\nSửa: /progress edit C... Nội dung mới\nXoá: /progress delete C...`;
+  return `Check-in tuần này:\n${checkins.slice(0,20).map(checkin => {
+    const category = checkin.item_kind === 'goal' ? 'Mục tiêu' : checkin.item_kind === 'commitment' ? 'Cam kết' : checkin.item_kind === 'habit' ? `Thói quen ${checkin.item_position}` : undefined;
+    return `• C${checkin.id} · ${checkin.note.slice(0,140)}${category && checkin.item_title ? ` — ${category}: ${checkin.item_title}` : ''}`;
+  }).join('\n')}\n\nSửa: /progress edit C... Nội dung mới\nXoá: /progress delete C...`;
 }
 
 function formatUngroupedProgressEvents(events: ProgressEvent[]): string {
@@ -182,11 +186,15 @@ function formatUngroupedProgressEvents(events: ProgressEvent[]): string {
 }
 
 function formatProgress(plan: WeeklyPlan, applications: number, runs: number): string {
-  const applicationTarget = targetFrom(plan.commitment);
+  const applicationTarget = /apply|ứng tuyển/iu.test(plan.commitment) ? targetFrom(plan.commitment) : undefined;
   const runHabit = [plan.habit1, plan.habit2].find(value => /chạy|run/iu.test(value));
   const runTarget = runHabit ? targetFrom(runHabit) : undefined;
   const ratio = (count: number, target?: number) => target ? `${count}/${target}` : `${count} lần đã ghi`;
-  return `Tiến độ tuần bắt đầu ${plan.week_start}:\n• Mục tiêu: ${plan.goal}\n• Cam kết: ${plan.commitment}\n• Apply: ${ratio(applications, applicationTarget)}\n• Chạy bộ: ${ratio(runs, runTarget)}\n\nCác kết quả được ghi theo xác nhận của anh.`;
+  const tracked = [
+    applicationTarget ? `• Cam kết apply: ${ratio(applications, applicationTarget)}` : undefined,
+    runHabit ? `• Thói quen chạy bộ: ${ratio(runs, runTarget)}` : undefined,
+  ].filter(Boolean).join('\n');
+  return `Tiến độ tuần bắt đầu ${plan.week_start}:\n• Mục tiêu: ${plan.goal}\n• Cam kết: ${plan.commitment}${tracked ? `\n${tracked}` : ''}\n\nCác kết quả được ghi theo xác nhận của anh.`;
 }
 
 function formatProgressEvents(events: ProgressEvent[]): string {
@@ -552,7 +560,9 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           }
         } else if (command.kind === 'progressList') {
           const [checkins, events] = await Promise.all([
-            db.prepare(`SELECT id,note,source_update FROM weekly_checkins WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<{id:number;note:string;source_update:number}>(),
+            db.prepare(`SELECT c.id,c.note,c.source_update,i.kind AS item_kind,i.position AS item_position,i.title AS item_title
+              FROM weekly_checkins c JOIN weekly_plan_items i ON i.id=c.plan_item_id
+              WHERE c.week_start=? ORDER BY c.id DESC LIMIT 21`).bind(currentWeek).all<{id:number;note:string;source_update:number;item_kind:PlanItem['kind'];item_position:number;item_title:string}>(),
             db.prepare(`SELECT id,kind,label,normalized_label FROM weekly_progress_events WHERE week_start=? ORDER BY id DESC LIMIT 21`).bind(currentWeek).all<ProgressEvent>(),
           ]);
           const ungrouped = events.results.filter(event => !checkins.results.some(checkin => checkin.source_update === event.source_update));

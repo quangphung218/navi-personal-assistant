@@ -251,3 +251,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Phát hiện từ pilot: hai lượt chạy bộ ngày 07 và 08/09 vẫn có trong `weekly_progress_events`, không có yêu cầu xoá/sửa, nhưng bị ẩn khi kế hoạch tuần hiện tại không còn mục chạy bộ. Đây là dữ liệu legacy chưa gắn được vào mục kế hoạch mới.
 - Đã làm: `/progress` giờ hiển thị rõ “Lịch sử đã ghi, chưa gắn với mục kế hoạch hiện tại” cho các lượt legacy chưa được materialize thành check-in. Lượt đã gắn không bị hiện lặp lại.
 - Đã kiểm chứng: regression test tạo kế hoạch không có chạy bộ cùng hai lượt chạy legacy, rồi kiểm tra cả hai ngày vẫn xuất hiện trong `/progress`.
+
+## 2026-09-10 — Gắn loại mục rõ trong tiến độ
+
+- Đã làm: `/progress` hiển thị rõ từng mục là `Mục tiêu`, `Cam kết` hoặc `Thói quen N`; mỗi check-in cũng ghi mục mà nó thuộc về. Điều này giúp phân biệt kết quả theo kế hoạch với lịch sử chưa gắn mục.
+- Đã sửa: dòng tóm tắt apply/chạy bộ chỉ xuất hiện khi chính kế hoạch tuần có cam kết apply hoặc thói quen chạy bộ; không còn tạo cảm giác Navi đang theo dõi một thói quen không có trong kế hoạch.
+- Đã kiểm chứng: regression test kiểm tra một plan không có chạy bộ vẫn gắn nhãn đủ mục tiêu/cam kết/thói quen và không hiện bộ đếm chạy bộ.

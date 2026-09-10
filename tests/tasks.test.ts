@@ -25,6 +25,9 @@ const db = env.DB;
 function update(id: number, text: string, user=123): TelegramUpdate {
   return { update_id:id, message:{from:{id:user,is_bot:false},chat:{id:user,type:'private'},text} };
 }
+function callbackUpdate(id: number, data: string, user=123): TelegramUpdate {
+  return { update_id:id, callback_query:{id:`callback-${id}`,from:{id:user,is_bot:false},message:{chat:{id:user,type:'private'}},data} };
+}
 async function receive(value: unknown, secret='test-webhook-secret') {
   const ctx=createExecutionContext();
   const response=await ingress.fetch(new Request('https://bot.test/webhooks/telegram',{method:'POST',headers:{'X-Telegram-Bot-Api-Secret-Token':secret},body:JSON.stringify(value)}),env,ctx);
@@ -50,6 +53,17 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/export json')).toEqual({kind:'export',format:'json'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
+  });
+  it('handles the inline progress button through the Telegram callback ingress path',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const) {
+      await receive(update(id,text)); await processNext(db,now); await replies();
+    }
+    const response=await receive(callbackUpdate(8,'_navi:show:progress'));
+    expect(response.status).toBe(200);
+    expect(await processNext(db,now)).toBe(true);
+    expect((await replies()).at(-1)).toContain('Tiến độ tuần');
   });
   it('reports observed runtime state and weekly check-in telemetry',async()=>{
     const now=Date.now();

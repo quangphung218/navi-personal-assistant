@@ -239,3 +239,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 
 - Đã làm: `/export` tạo bản Markdown của kế hoạch tuần, tối đa 6 task gần nhất và 6 check-in tuần hiện tại; `/export json` trả cùng snapshot ở dạng máy đọc được.
 - Giới hạn: Telegram có giới hạn độ dài tin nhắn nên export chủ động giới hạn danh sách. Đây là snapshot gửi riêng cho chat đã pairing, không phải backup lịch sử đầy đủ hay file đính kèm.
+
+## 2026-09-10 — Khôi phục callback Telegram cho nút inline
+
+- Nguyên nhân: webhook Telegram pilot chỉ đăng ký update kiểu `message`. Các nút inline như “Xem tiến độ” gửi `callback_query`, nên Telegram không chuyển update đến Worker; D1 không tạo job và chat không có phản hồi.
+- Đã làm: thêm `npm run telegram:webhook`, đọc URL webhook hiện có và cấu hình rõ `message` cùng `callback_query`, giữ webhook secret và không bỏ update đang chờ. Script xác nhận lại cấu hình sau khi ghi.
+- Đã kiểm chứng: regression test gửi callback thật qua ingress → D1 job → Processor/outbox giả lập và nhận nội dung “Tiến độ tuần”. Cần chạy script với secret local để đồng bộ cấu hình Telegram thật.

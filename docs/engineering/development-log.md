@@ -333,3 +333,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: mỗi review hiện tối đa năm task với nút `Đã xong` và `Sang tuần`. Nút `Sang tuần` dùng cùng luồng durable với `/review carry T...`, nên chỉ đánh dấu một carryover và không nhân bản task.
 - Giới hạn: review không tự quyết định xoá hoặc chuyển task; người dùng chọn rõ từng task. Khi có hơn năm task, Navi báo số còn lại và hướng dẫn dùng `/list`.
 - Đã kiểm chứng: `npm run check` pass với 52 tests, typecheck và Worker build dry-run. Ca mới phủ render nút review và callback chuyển task sang tuần.
+
+## 2026-09-10 — Hướng dẫn và ngữ cảnh hội thoại an toàn
+
+- Đã làm: `/help` bổ sung nhóm mục tiêu, tuần tiếp theo và ví dụ câu nói tự nhiên để các lệnh mới không chỉ xuất hiện trong Telegram menu.
+- Đã làm: Navi hiểu `mục tiêu này xong rồi`, `mở lại mục tiêu này`, `gắn task này vào mục tiêu`, `bỏ task này khỏi mục tiêu` và `task này để tuần sau`. Các tham chiếu này chỉ được nối khi đúng một task đang mở; có nhiều task thì Navi yêu cầu mã `T...` thay vì đoán.
+- An toàn dữ liệu: hoàn tất mục tiêu vẫn mở màn xác nhận; chuyển task sang tuần vẫn đi qua bản ghi carryover có unique key như lệnh `/review carry T...`.
+- Đã kiểm chứng: `npm run check` pass với 53 tests, typecheck và Worker build dry-run. Ca mới phủ parser, task ngữ cảnh, confirmation mục tiêu, carryover và nội dung `/help`.

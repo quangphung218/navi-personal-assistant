@@ -564,8 +564,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
             : `Anh muốn mở lại mục tiêu “${goal.title}”. Anh bấm nút để xác nhận.`;
           replyMarkup = confirmationButtons(`goal:${action}:${goal.id}`);
         } else if (command.action === 'attach' || command.action === 'detach') {
-          const task = await db.prepare('SELECT id,title,status,goal_id FROM tasks WHERE id=?').bind(command.taskId).first<{id:string;title:string;status:string;goal_id:number|null}>();
-          if (!task) result = 'Em không thấy task này. Anh dùng /list để xem mã task nhé.';
+          const taskCandidates = command.taskId === 'đó'
+            ? (await db.prepare("SELECT id,title,status,goal_id FROM tasks WHERE status='open' ORDER BY created_at DESC,id DESC LIMIT 2").all<{id:string;title:string;status:string;goal_id:number|null}>()).results
+            : (await db.prepare('SELECT id,title,status,goal_id FROM tasks WHERE id=?').bind(command.taskId).all<{id:string;title:string;status:string;goal_id:number|null}>()).results;
+          const task = taskCandidates.length === 1 ? taskCandidates[0] : undefined;
+          if (!task) result = taskCandidates.length > 1 ? 'Có nhiều task gần đây. Anh dùng /goal add T... để em gắn đúng task nhé.' : 'Em không thấy task này. Anh dùng /list để xem mã task nhé.';
           else if (command.action === 'attach') {
             statements.push(db.prepare(`UPDATE tasks SET goal_id=? WHERE id=? AND ${guard}`).bind(goal.id,task.id,...args()));
             result = `Đã gắn ${task.id}: ${task.title} với mục tiêu “${goal.title}”.`;
@@ -611,8 +614,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     } else if (command.kind === 'review') {
       const currentWeek = weekStart(now);
       if (command.carry) {
-        const task = await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE id=? AND status='open'").bind(command.carry).first<Task>();
-        if (!task) result = 'Task này không còn mở nên không cần chuyển tuần.';
+        const taskCandidates = command.carry === 'đó'
+          ? (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE status='open' ORDER BY created_at DESC,id DESC LIMIT 2").all<Task>()).results
+          : (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE id=? AND status='open'").bind(command.carry).all<Task>()).results;
+        const task = taskCandidates.length === 1 ? taskCandidates[0] : undefined;
+        if (!task) result = taskCandidates.length > 1 ? 'Có nhiều task gần đây. Anh dùng /review carry T... để chọn đúng task nhé.' : 'Task này không còn mở nên không cần chuyển tuần.';
         else {
           const next = weekEnd(currentWeek);
           const nextMonday = new Date(`${next}T00:00:00Z`); nextMonday.setUTCDate(nextMonday.getUTCDate()+1);
@@ -986,7 +992,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       }
       }
       }
-    } else if (command.kind === 'help') result = help;
+    } else if (command.kind === 'help') result = `${help}\n\nMục tiêu\n/goal — xem mục tiêu và task hỗ trợ\n/goal add T123 — gắn task vào mục tiêu\n/goal remove T123 — chuyển task thành việc riêng\n/goal done — đánh dấu mục tiêu đã đạt\n/week continue — tiếp tục mục tiêu tuần trước\n\nAnh cũng có thể nhắn tự nhiên: “mục tiêu này xong rồi”, “task này để tuần sau” hoặc “gắn task này vào mục tiêu”.`;
     else if (command.kind === 'thanks') result = 'Dạ, em ở đây. Khi cần thêm việc anh cứ nhắn em nhé.';
     else if (parseNaturalAdd(job.text)) {
       const title = parseNaturalAdd(job.text)!;

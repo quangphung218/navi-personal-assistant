@@ -42,7 +42,12 @@ export function parseCommand(text: string): Command {
     const title = (scoped?.[1] ?? raw).trim();
     return title.length > 0 && title.length <= 180 ? { kind: 'add', title, goalScoped:Boolean(scoped) } : { kind: 'unknown' };
   }
-  if (/^(?:đánh dấu|đánh dấu là)\s+(?:việc đó|task đó|cái đó)\s+(?:xong|hoàn thành)$/iu.test(value)) return { kind: 'done', reference: 'đó' };
+  if (/^(?:mục tiêu|goal)\s+(?:này|đó)\s+(?:đã )?(?:xong|hoàn thành)(?: rồi)?[.!]?$/iu.test(value)) return {kind:'goal',action:'complete'};
+  if(/^(?:mở lại|tiếp tục)\s+(?:mục tiêu|goal)\s+(?:này|đó)[.!]?$/iu.test(value)) return {kind:'goal',action:'reopen'};
+  if (/^(?:gắn|thêm)\s+(?:task|việc)\s+(?:này|đó)\s+(?:vào|cho)\s+(?:mục tiêu|goal)[.!]?$/iu.test(value)) return {kind:'goal',action:'attach',taskId:'đó'};
+  if (/^(?:bỏ|gỡ)\s+(?:task|việc)\s+(?:này|đó)\s+(?:khỏi|ra khỏi)\s+(?:mục tiêu|goal)[.!]?$/iu.test(value)) return {kind:'goal',action:'detach',taskId:'đó'};
+  if (/^(?:(?:task|việc)\s+(?:này|đó)\s+)?(?:để|sang)\s+tuần sau[.!]?$/iu.test(value)) return {kind:'review',carry:'đó'};
+  if (/^(?:đánh dấu(?: là)?\s+)?(?:việc|task|cái)\s+(?:này|đó)\s+(?:đã )?(?:xong|hoàn thành)[.!]?$/iu.test(value)) return { kind: 'done', reference: 'đó' };
   const done = value.match(/^(?:\/done(?:@\w+)?\s+|(?:xong|hoàn thành)\s+)(.+)$/iu);
   if (done) return { kind: 'done', reference: done[1]!.trim() };
   if (/^\/list(?:@\w+)?\s+all$/iu.test(value)) return { kind: 'list', includeDone: true };

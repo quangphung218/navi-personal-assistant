@@ -61,6 +61,9 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/goal add T12')).toEqual({kind:'goal',action:'attach',taskId:'T12'});
     expect(parseCommand('/week continue')).toEqual({kind:'week',continueGoal:true});
     expect(parseCommand('_navi:review:carry:T12')).toEqual({kind:'review',carry:'T12'});
+    expect(parseCommand('Mục tiêu này xong rồi')).toEqual({kind:'goal',action:'complete'});
+    expect(parseCommand('Task này để tuần sau')).toEqual({kind:'review',carry:'đó'});
+    expect(parseCommand('Gắn task này vào mục tiêu')).toEqual({kind:'goal',action:'attach',taskId:'đó'});
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();
@@ -540,6 +543,24 @@ describe('task conversation on real D1 bindings',()=>{
     await replies();
     await accept(db,update(10,'_navi:review:carry:T8'),false,now); await processNext(db,now); await replies();
     expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toMatchObject({task_id:'T8'});
+  });
+  it('understands a contextual task and goal reference when one task is unambiguous',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng'],[8,'/add Viết README']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    await accept(db,update(9,'Gắn task này vào mục tiêu'),false,now); await processNext(db,now); await replies();
+    expect((await tasks(db))[0]).toMatchObject({id:'T8',goal_title:'Ship Navi'});
+    await accept(db,update(10,'Mục tiêu này xong rồi'),false,now); await processNext(db,now);
+    const goalPrompt=await db.prepare('SELECT text,reply_markup FROM deliveries ORDER BY job_id DESC LIMIT 1').first<{text:string;reply_markup:string}>();
+    expect(goalPrompt?.text).toContain('Anh muốn đánh dấu mục tiêu');
+    expect(JSON.parse(goalPrompt!.reply_markup).inline_keyboard[0][0].callback_data).toContain('_navi:confirm:goal:complete:');
+    await replies();
+    await accept(db,update(11,'Task này để tuần sau'),false,now); await processNext(db,now); await replies();
+    expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toMatchObject({task_id:'T8'});
+    await accept(db,update(12,'/help'),false,now); await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('mục tiêu này xong rồi');
   });
   it('continues a goal into the next week without creating a second identity',async()=>{
     const now=Date.now(), local=new Date(now+7*60*60*1000), day=(local.getUTCDay()+6)%7;

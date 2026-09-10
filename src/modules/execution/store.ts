@@ -13,7 +13,8 @@ type ProgressChange = { id: number; event_id: number; action: 'delete'|'rename';
 type CheckInChange = { id: number; checkin_id: number; action: 'delete'|'rename'; new_note: string|null };
 type CheckInSelection = { id: number; week_start: string; source_update: number; text: string; candidate_item_ids: string; status: 'pending'|'selected'|'rejected'; expires_at: number|null };
 type PlanItem = { id: number; kind: 'goal'|'commitment'|'habit'; position: number; title: string; normalized_title: string; metric: 'count'|'completion'; target_count: number|null; status: 'active'|'completed'; completed: number; goal_id: number|null; habit_id: number|null; cadence: 'daily'|'weekly'|null; minimum_value: number|null; minimum_unit: string|null };
-type StagedCheckIn = { item: PlanItem; text: string; weekStart: string; sourceUpdate: number; occurredAt: number; chatId: string; outcome: 'recorded'|'selected' };
+type StagedCheckIn = { item: PlanItem; text: string; weekStart: string; sourceUpdate: number; occurredAt: number; localDate?: string; chatId: string; outcome: 'recorded'|'selected' };
+type MeasurementRequest = PlanItem & { request_id: number; request_week_start: string; request_local_date: string };
 type HabitSpec = { cadence: 'daily'|'weekly'; target: number; minimumValue?: number; minimumUnit?: 'minutes' };
 
 function localDate(now: number): string {
@@ -208,7 +209,7 @@ async function habitStreaks(db: D1Database, week: string, now: number): Promise<
 async function stageCheckIn(db: D1Database, statements: D1PreparedStatement[], guard: string, args: () => (string|number)[], checkIn: StagedCheckIn): Promise<{ already: boolean; progress: string; needsMeasurement?: boolean; metThreshold?: boolean; actualValue?: number }> {
   const quantity = checkIn.item.kind === 'habit' ? 1 : checkIn.item.metric === 'count' ? checkInQuantity(checkIn.text) : 1;
   const key = checkInKey(checkIn.item,checkIn.text,checkIn.occurredAt);
-  const localDay = checkIn.item.kind === 'habit' ? checkInDate(checkIn.text,checkIn.occurredAt) : null;
+  const localDay = checkIn.item.kind === 'habit' ? (checkIn.localDate ?? checkInDate(checkIn.text,checkIn.occurredAt)) : null;
   const actualValue = checkIn.item.kind === 'habit' ? reportedHabitValue(checkIn.text,checkIn.item) : undefined;
   if (checkIn.item.kind === 'habit' && checkIn.item.minimum_value !== null && actualValue === undefined) {
     return { already:false, progress:`cần ghi số phút để đối chiếu mức ${checkIn.item.minimum_value} phút`, needsMeasurement:true };
@@ -304,6 +305,22 @@ function confirmationButtons(target: string): ReplyMarkup {
 }
 
 const progressButton: ReplyMarkup = { inline_keyboard: [[{ text: 'Xem tiến độ', callback_data: '_navi:show:progress' }]] };
+
+function progressPageButtons(page: number, hasNext: boolean): ReplyMarkup | undefined {
+  const buttons = [] as Array<{text:string;callback_data:string}>;
+  if (page > 0) buttons.push({text:'‹ Trang trước',callback_data:`_navi:show:progress:${page-1}`});
+  if (hasNext) buttons.push({text:'Trang sau ›',callback_data:`_navi:show:progress:${page+1}`});
+  return buttons.length ? {inline_keyboard:[buttons]} : undefined;
+}
+
+function stageMeasurementRequest(db: D1Database, statements: D1PreparedStatement[], guard: string, args: () => (string|number)[], checkIn: StagedCheckIn): void {
+  const localDay = checkIn.localDate ?? checkInDate(checkIn.text,checkIn.occurredAt);
+  statements.push(db.prepare(`UPDATE checkin_measurement_requests SET status='expired',decided_at=?
+    WHERE chat_id=? AND status='pending' AND (expires_at<=? OR plan_item_id=?) AND ${guard}`)
+    .bind(checkIn.occurredAt,checkIn.chatId,checkIn.occurredAt,checkIn.item.id,...args()));
+  statements.push(db.prepare(`INSERT INTO checkin_measurement_requests(chat_id,plan_item_id,week_start,local_date,source_update,created_at,expires_at)
+    SELECT ?,?,?,?,?,?,? WHERE ${guard}`).bind(checkIn.chatId,checkIn.item.id,checkIn.weekStart,localDay,checkIn.sourceUpdate,checkIn.occurredAt,checkIn.occurredAt+24*60*60*1000,...args()));
+}
 
 function taskReminderButtons(taskId: string): ReplyMarkup {
   return { inline_keyboard: [[
@@ -547,6 +564,29 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           .bind(job.chat_id, command.enabled ? 1 : 0, now, ...args()));
         result = command.enabled ? 'Đã bật nhắc tiến độ tuần lúc 20:00 mỗi tối (giờ Việt Nam).' : 'Đã tắt nhắc tiến độ tuần. Khi cần bật lại, anh nhắn /reminders on.';
       }
+    } else if (command.kind === 'measurement') {
+      const pending = await db.prepare(`SELECT r.id AS request_id,r.week_start AS request_week_start,r.local_date AS request_local_date,
+        i.id,i.kind,i.position,i.title,i.normalized_title,i.metric,i.target_count,i.status,i.goal_id,i.habit_id,i.cadence,i.minimum_value,i.minimum_unit,
+        COALESCE(SUM(CASE WHEN COALESCE(c.met_threshold,1)=1 THEN c.quantity ELSE 0 END),0) AS completed
+        FROM checkin_measurement_requests r JOIN weekly_plan_items i ON i.id=r.plan_item_id
+        LEFT JOIN weekly_checkins c ON c.plan_item_id=i.id
+        WHERE r.chat_id=? AND r.status='pending' AND r.expires_at>?
+        GROUP BY r.id,i.id ORDER BY r.created_at DESC LIMIT 1`).bind(job.chat_id,now).first<MeasurementRequest>();
+      if (!pending) result = 'Em chưa có câu hỏi số phút nào đang chờ. Anh gửi lại cập nhật thói quen kèm số phút giúp em nhé.';
+      else if (pending.minimum_unit !== command.unit) result = `Em đang cần số phút cho “${pending.title}”.`;
+      else {
+        const occurredAt = Date.parse(`${pending.request_local_date}T12:00:00+07:00`);
+        const staged = await stageCheckIn(db,statements,guard,args,{item:pending,text:`Đã thực hiện ${command.value} phút`,weekStart:pending.request_week_start,sourceUpdate:job.update_id,occurredAt,localDate:pending.request_local_date,chatId:job.chat_id,outcome:'recorded'});
+        if (staged.already) result = `Ngày ${pending.request_local_date} của “${pending.title}” đã được ghi trước đó.`;
+        else {
+          statements.push(db.prepare(`UPDATE checkin_measurement_requests SET status='recorded',decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
+            .bind(now,pending.request_id,...args()));
+          result = staged.metThreshold === false
+            ? `Đã ghi ${command.value}/${pending.minimum_value} phút cho “${pending.title}”. Ngày này chưa tính vào tiến độ.`
+            : `Đã ghi nhận ${command.value} phút cho “${pending.title}”: ${staged.progress}.`;
+          replyMarkup = progressButton;
+        }
+      }
     } else if (command.kind === 'checkIn') {
       const currentWeek = weekStart(now);
       const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
@@ -574,8 +614,12 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         else {
           const item = candidates[0]!;
           const occurredAt = command.date ? Date.parse(`${datedRunLabel(command.date,now)!}T12:00:00+07:00`) : now;
-          const staged = await stageCheckIn(db,statements,guard,args,{item,text:command.text,weekStart:currentWeek,sourceUpdate:job.update_id,occurredAt,chatId:job.chat_id,outcome:'recorded'});
-          if (staged.needsMeasurement) result = `Để ghi thói quen “${item.title}”, anh cho em biết đã làm bao nhiêu phút nhé.`;
+          const checkIn = {item,text:command.text,weekStart:currentWeek,sourceUpdate:job.update_id,occurredAt,chatId:job.chat_id,outcome:'recorded' as const};
+          const staged = await stageCheckIn(db,statements,guard,args,checkIn);
+          if (staged.needsMeasurement) {
+            stageMeasurementRequest(db,statements,guard,args,checkIn);
+            result = `Để ghi thói quen “${item.title}”, anh cho em biết đã làm bao nhiêu phút nhé. Anh chỉ cần trả lời, ví dụ: 5 phút.`;
+          }
           else if (staged.already) result = `Cập nhật này đã được ghi trước đó cho “${item.title}”.`;
           else {
             result = staged.metThreshold === false
@@ -600,8 +644,12 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         result = 'Lựa chọn này không còn hiệu lực. Anh gửi lại cập nhật để Navi hỏi lại nhé.';
       }
       else {
-        const staged = await stageCheckIn(db,statements,guard,args,{item,text:selection.text,weekStart:selection.week_start,sourceUpdate:selection.source_update,occurredAt:now,chatId:job.chat_id,outcome:'selected'});
-        if (staged.needsMeasurement) result = `Để ghi thói quen “${item.title}”, anh cho em biết đã làm bao nhiêu phút nhé.`;
+        const checkIn = {item,text:selection.text,weekStart:selection.week_start,sourceUpdate:selection.source_update,occurredAt:now,chatId:job.chat_id,outcome:'selected' as const};
+        const staged = await stageCheckIn(db,statements,guard,args,checkIn);
+        if (staged.needsMeasurement) {
+          stageMeasurementRequest(db,statements,guard,args,checkIn);
+          result = `Để ghi thói quen “${item.title}”, anh cho em biết đã làm bao nhiêu phút nhé. Anh chỉ cần trả lời, ví dụ: 5 phút.`;
+        }
         else if (staged.already) result = `Cập nhật này đã được ghi cho “${item.title}”.`;
         else {
           statements.push(db.prepare(`UPDATE checkin_selection_requests SET status='selected',selected_item_id=?,decided_at=? WHERE id=? AND status='pending' AND ${guard}`)
@@ -656,16 +704,20 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
             }
           }
         } else if (command.kind === 'progressList') {
+          const page = Math.max(0,command.page), pageSize = 6, offset = page * pageSize;
           const [checkins, events, streaks] = await Promise.all([
             db.prepare(`SELECT c.id,c.note,c.source_update,i.kind AS item_kind,i.position AS item_position,i.title AS item_title
               FROM weekly_checkins c JOIN weekly_plan_items i ON i.id=c.plan_item_id
-              WHERE c.week_start=? ORDER BY c.id DESC LIMIT 21`).bind(currentWeek).all<{id:number;note:string;source_update:number;item_kind:PlanItem['kind'];item_position:number;item_title:string}>(),
+              WHERE c.week_start=? ORDER BY c.id DESC LIMIT ? OFFSET ?`).bind(currentWeek,pageSize+1,offset).all<{id:number;note:string;source_update:number;item_kind:PlanItem['kind'];item_position:number;item_title:string}>(),
             db.prepare(`SELECT e.id,e.kind,e.label,e.normalized_label,e.source_update FROM weekly_progress_events e
               WHERE e.week_start=? AND NOT EXISTS(SELECT 1 FROM weekly_checkins c WHERE c.source_update=e.source_update)
-              ORDER BY e.id DESC LIMIT 21`).bind(currentWeek).all<ProgressEvent>(),
+              ORDER BY e.id DESC LIMIT ? OFFSET ?`).bind(currentWeek,pageSize+1,offset).all<ProgressEvent>(),
             habitStreaks(db, currentWeek, now),
           ]);
-          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true,streaks)}\n\n${formatCheckIns(checkins.results)}${events.results.length ? `\n\n${formatUngroupedProgressEvents(events.results)}` : ''}`;
+          const hasNext = checkins.results.length > pageSize || events.results.length > pageSize;
+          const visibleCheckins = checkins.results.slice(0,pageSize), visibleEvents = events.results.slice(0,pageSize);
+          result = `${formatProgress(plan, applications, runs)}${formatPlanItems(items,true,streaks)}\n\nLịch sử gần đây · trang ${page+1}\n${formatCheckIns(visibleCheckins)}${visibleEvents.length ? `\n\n${formatUngroupedProgressEvents(visibleEvents)}` : ''}`;
+          replyMarkup = progressPageButtons(page,hasNext);
         } else if (command.kind === 'progressChange') {
           const pendingChange = await db.prepare("SELECT id,event_id,action,new_label FROM progress_change_requests WHERE chat_id=? AND status='pending' LIMIT 1")
             .bind(job.chat_id).first<ProgressChange>();

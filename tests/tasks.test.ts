@@ -17,6 +17,7 @@ import checkinOutcomesMigration from '../migrations/0016_checkin_outcomes.sql?ra
 import expireCheckinSelectionsMigration from '../migrations/0017_expire_checkin_selections.sql?raw';
 import foundationsMigration from '../migrations/0018_goal_habit_foundations.sql?raw';
 import backfillHabitDatesMigration from '../migrations/0019_backfill_habit_checkin_dates.sql?raw';
+import measurementRequestsMigration from '../migrations/0020_checkin_measurement_requests.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -42,14 +43,14 @@ async function replies() {
   return messages;
 }
 beforeEach(async()=>{
-  for(const table of ['checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
     expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','today','schedule','review','progress','insights','export','add','list','done','reminders','status','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
-    expect(parseCommand('/progress')).toEqual({kind:'progressList'});
+    expect(parseCommand('/progress')).toEqual({kind:'progressList',page:0});
     expect(parseCommand('/add mục tiêu: Viết README')).toEqual({kind:'add',title:'Viết README',goalScoped:true});
     expect(parseCommand('/status')).toEqual({kind:'systemStatus'});
     expect(parseCommand('/insights')).toEqual({kind:'insights'});
@@ -531,5 +532,33 @@ describe('task conversation on real D1 bindings',()=>{
     ]);
     await db.prepare(backfillHabitDatesMigration).run();
     expect(await db.prepare('SELECT local_date FROM weekly_checkins WHERE source_update=88').first()).toMatchObject({local_date:'2026-09-07'});
+  });
+  it('records a bare minute reply against the pending habit measurement',async()=>{
+    await link(); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,"Thiền trong 5'"],[6,'Nghe tiếng Anh'],[7,'đúng']] as const) {
+      await receive(update(id,text)); await processNext(db); await replies();
+    }
+    await receive(update(8,'Hôm nay anh đã thiền')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('ví dụ: 5 phút');
+    expect(await db.prepare("SELECT status FROM checkin_measurement_requests WHERE source_update=8").first()).toMatchObject({status:'pending'});
+    await receive(update(9,'5 phút')); await processNext(db);
+    expect((await replies()).at(-1)).toContain('Đã ghi nhận 5 phút');
+    expect(await db.prepare('SELECT actual_value,met_threshold FROM weekly_checkins').first()).toMatchObject({actual_value:5,met_threshold:1});
+    expect(await db.prepare("SELECT status FROM checkin_measurement_requests WHERE source_update=8").first()).toMatchObject({status:'recorded'});
+  });
+  it('paginates progress history with a callback-safe page command',async()=>{
+    await link(); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng']] as const) {
+      await receive(update(id,text)); await processNext(db); await replies();
+    }
+    const item=await db.prepare("SELECT id,week_start FROM weekly_plan_items WHERE kind='commitment'").first<{id:number;week_start:string}>();
+    await db.batch(Array.from({length:7},(_,index)=>db.prepare(`INSERT INTO weekly_checkins(week_start,plan_item_id,quantity,note,normalized_note,source_update,occurred_at)
+      VALUES(?,?,?,?,?,?,?)`).bind(item!.week_start,item!.id,1,`Apply ${index+1}`,`apply ${index+1}`,100+index,Date.now()+index)));
+    expect(parseCommand('_navi:show:progress:1')).toEqual({kind:'progressList',page:1});
+    await receive(update(20,'/progress 2')); await processNext(db);
+    const progress=(await replies()).at(-1) ?? '';
+    expect(progress).toContain('Lịch sử gần đây · trang 2');
+    expect(progress).toContain('Apply 1');
+    expect(progress).not.toContain('Apply 7');
   });
 });

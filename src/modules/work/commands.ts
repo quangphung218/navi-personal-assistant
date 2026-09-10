@@ -1,6 +1,6 @@
 export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { kind: 'done'; reference: string }
   | { kind: 'list'; includeDone: boolean } | { kind: 'confirm'; target?: string } | { kind: 'reject'; target?: string }
-  | { kind: 'week' } | { kind: 'weekStatus' } | { kind: 'progressList' }
+  | { kind: 'week' } | { kind: 'weekStatus' } | { kind: 'progressList'; page: number }
   | { kind: 'today' } | { kind: 'review'; carry?: string }
   | { kind: 'schedule'; reference: string; day: number; month: number; year?: number; hour: number; minute: number }
   | { kind: 'defer'; reference: string } | { kind: 'clearSchedule'; reference: string }
@@ -9,6 +9,7 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
   | { kind: 'progressChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkInChange'; action: 'delete'|'rename'; reference: string; detail?: string }
   | { kind: 'checkIn'; text: string; date?: { day: number; month: number; year?: number } }
+  | { kind: 'measurement'; value: number; unit: 'minutes' }
   | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
   | { kind: 'reminders'; enabled?: boolean } | { kind: 'export'; format: 'markdown'|'json' }
   | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'status' }
@@ -19,7 +20,9 @@ export function parseCommand(text: string): Command {
   const value = text.trim();
   const callback = value.match(/^_navi:(confirm|reject):([a-z]+:[a-z0-9-]+)$/iu);
   if (callback) return { kind: callback[1] === 'confirm' ? 'confirm' : 'reject', target: callback[2]!.toLowerCase() };
-  if (/^_navi:show:progress$/iu.test(value)) return { kind: 'progressList' };
+  if (/^_navi:show:progress$/iu.test(value)) return { kind: 'progressList', page:0 };
+  const progressPage = value.match(/^_navi:show:progress:(\d{1,3})$/iu);
+  if (progressPage) return { kind:'progressList',page:Number(progressPage[1]) };
   const checkInSelect = value.match(/^_navi:checkin:select:(\d+):(\d+)$/iu);
   if (checkInSelect) return { kind: 'checkInSelect', sourceUpdate: Number(checkInSelect[1]), itemId: Number(checkInSelect[2]) };
   const taskAction = value.match(/^_navi:task:(done|defer|clear):(T\d+)$/iu);
@@ -66,7 +69,8 @@ export function parseCommand(text: string): Command {
     if (action === 'delete' && !detail) return { kind: 'checkInChange', action, reference: checkInChange[2]!.toUpperCase() };
     if (action === 'rename' && detail && detail.length > 1 && detail.length <= 180) return { kind: 'checkInChange', action, reference: checkInChange[2]!.toUpperCase(), detail };
   }
-  if (/^\/progress(?:@\w+)?$/iu.test(value)) return { kind: 'progressList' };
+  const progressList = value.match(/^\/progress(?:@\w+)?(?:\s+(\d{1,3}))?$/iu);
+  if (progressList) return { kind: 'progressList', page:Math.max(0,Number(progressList[1] ?? 1)-1) };
   if (/^(?:\/week(?:@\w+)?\s+status|tiến độ tuần|tuần này thế nào\??)$/iu.test(value)) return { kind: 'weekStatus' };
   if (/^(?:\/week|\/tuan|lập kế hoạch tuần|kế hoạch tuần)(?:@\w+)?$/iu.test(value)) return { kind: 'week' };
   if (/^(?:\/reminders?(?:@\w+)?\s+(?:on|bật)|bật nhắc(?: tiến độ)?|bật reminder)$/iu.test(value)) return { kind: 'reminders', enabled: true };
@@ -80,12 +84,14 @@ export function parseCommand(text: string): Command {
     if (day >= 1 && day <= 31 && month >= 1 && month <= 12) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, ''), date:{day,month,year} };
   }
   if (/^(?:\/log\s+run|(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:chạy bộ|đi chạy)(?:\s+[^\n]{0,120})?)[.!]?$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
-  if (/^(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:xong|hoàn thành|làm xong|public|đăng|viết|đọc|học|thiền|nghe)\b[\s\S]{1,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
+  if (/^(?:(?:hôm nay)\s+)?(?:anh\s+)?(?:vừa|đã)\s+(?:xong|hoàn thành|làm xong|public|đăng|viết|đọc|học|thiền|nghe)\b[\s\S]{0,180}$/iu.test(value)) return { kind: 'checkIn', text: value.replace(/[.!?]+$/u, '') };
   const datedHabit = value.match(/^ngày\s+(\d{1,2})[\/-](\d{1,2})(?:[\/-](\d{4}))?\s+(?:anh\s+)?(?:vừa|đã)\s+(?:thiền|nghe)\b[\s\S]{0,180}$/iu);
   if (datedHabit) {
     const day=Number(datedHabit[1]), month=Number(datedHabit[2]), year=datedHabit[3] ? Number(datedHabit[3]) : undefined;
     if (day>=1&&day<=31&&month>=1&&month<=12) return { kind:'checkIn', text:value.replace(/[.!?]+$/u,''), date:{day,month,year} };
   }
+  const measurement = value.match(/^(\d{1,3})\s*(?:phút|phut|min|['’])[.!]?$/iu);
+  if (measurement) return { kind:'measurement',value:Number(measurement[1]),unit:'minutes' };
   if (/^(?:đúng|đúng rồi|ok|okay|đồng ý|xác nhận|yes)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'confirm' };
   if (/^(?:không|không phải|hủy|huỷ|cancel|no)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'reject' };
   if (/^(?:cảm ơn|cam on|thanks|thank you)(?:\s+em)?[.!]?$/iu.test(value)) return { kind: 'thanks' };
@@ -97,4 +103,4 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/insights — xem mức Navi hiểu check-in tuần này\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\n\nTask\n/add Viết README — việc riêng\n/add mục tiêu: Viết README — việc cho mục tiêu tuần\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;
+export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/progress 2 — xem trang lịch sử tiếp theo\n/insights — xem mức Navi hiểu check-in tuần này\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\nNếu Navi hỏi số phút, anh chỉ cần trả lời: 5 phút\n\nTask\n/add Viết README — việc riêng\n/add mục tiêu: Viết README — việc cho mục tiêu tuần\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;

@@ -301,3 +301,11 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Dữ liệu: migration `0019_backfill_habit_checkin_dates.sql` đã điền `local_date` cho habit check-in cũ, ưu tiên ngày ISO của lượt chạy legacy rồi đến ngày Việt Nam của lúc ghi. `UPDATE OR IGNORE` giữ nguyên bản ghi nếu dữ liệu cũ trùng ngày, không xoá hoặc gộp bằng chứng.
 - Đã áp dụng migration remote và deploy Processor version `feed2fb0-f411-4270-b8a6-5368cf2ed7e4`.
 - Đã kiểm chứng: `npm run check` pass với 45 tests, typecheck và Worker build dry-run. Test mới bao phủ sửa note giữ measurement, cadence có cả thời lượng/lịch tuần và backfill ngày chạy legacy.
+
+## 2026-09-10 — Đo thói quen tiếp nối và lịch sử phân trang
+
+- Đã làm: khi cập nhật habit thiếu mức đo, Navi tạo một yêu cầu số phút có scope habit/ngày và hạn 24 giờ. Anh có thể trả lời ngắn `5 phút`; Worker nối câu trả lời với yêu cầu đang chờ, kiểm tra ngưỡng và lưu check-in bền vững. Không có yêu cầu chờ thì câu số phút không tự tạo progress.
+- Đã làm: `/progress` giữ tổng quan và hiển thị sáu check-in/lượt legacy mỗi trang. `/progress 2` hoặc nút Trang sau/Trang trước xem tiếp lịch sử; formatter giữ payload ngắn hơn giới hạn Telegram.
+- Dữ liệu: migration `0020_checkin_measurement_requests.sql` thêm trạng thái pending/recorded/expired cho yêu cầu số phút, không chứa secret hay thay đổi check-in cũ.
+- Đã áp dụng migration remote và deploy Processor version `f7eaf5e8-48e5-42be-810b-389ae9c2b807`.
+- Đã kiểm chứng: `npm run check` pass với 47 tests, typecheck và Worker build dry-run. Ca mới kiểm tra trả lời bare `5 phút` và trang hai của progress.

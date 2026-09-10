@@ -1,10 +1,10 @@
 import { help, normalize, parseCommand, parseNaturalAdd } from '../work/commands';
 import type { ReplyMarkup, TelegramUpdate, Sender } from '../../adapters/telegram';
-import type { Assistant } from '../../adapters/openrouter';
+import type { Assistant, StructuredAssistant } from '../../adapters/openrouter';
 
 type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number };
 type Task = { id: string; title: string; status: 'open' | 'done'; revision: number; due_at?: number|null; goal_id?: number|null; goal_title?: string|null };
-type Approval = { id: number; source_update: number; title: string; status: 'pending' };
+type Approval = { id: number; source_update: number; title: string; goal_scoped: number; status: 'pending' };
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
 type WeeklyPlan = { week_start: string; chat_id: string; goal: string; commitment: string; habit1: string; habit2: string };
 type ReminderPreference = { weekly_progress_enabled: number; delivery_hour: number };
@@ -426,8 +426,8 @@ async function systemStatusSummary(db: D1Database, chatId: string, now: number):
     db.prepare(`SELECT ROUND(AVG(processing_started_at-queued_at)) AS queue_ms,
       ROUND(AVG(processing_finished_at-processing_started_at)) AS processing_ms,
       ROUND(AVG(delivery_finished_at-delivery_started_at)) AS delivery_ms,
-      ROUND(AVG(CASE WHEN route='ai' THEN ai_finished_at-ai_started_at END)) AS ai_ms,
-      SUM(CASE WHEN route='ai' THEN 1 ELSE 0 END) AS ai_count
+      ROUND(AVG(CASE WHEN route LIKE 'ai%' THEN ai_finished_at-ai_started_at END)) AS ai_ms,
+      SUM(CASE WHEN route LIKE 'ai%' THEN 1 ELSE 0 END) AS ai_count
       FROM (SELECT m.* FROM job_metrics m JOIN jobs j ON j.id=m.job_id WHERE j.chat_id=? ORDER BY m.job_id DESC LIMIT 10)`).bind(chatId)
       .first<{queue_ms:number|null;processing_ms:number|null;delivery_ms:number|null;ai_ms:number|null;ai_count:number|null}>(),
   ]);
@@ -488,7 +488,7 @@ export async function reserveAi(db: D1Database, now = Date.now()): Promise<boole
 }
 
 // All mutations in the personal conversation share this lease. Every write is fenced.
-export async function processNext(db: D1Database, now = Date.now(), assistant?: Assistant): Promise<boolean> {
+export async function processNext(db: D1Database, now = Date.now(), assistant?: Assistant, structuredAssistant?: StructuredAssistant): Promise<boolean> {
   const token = crypto.randomUUID();
   const claimed = await db.prepare('UPDATE owner SET lease_token=?,lease_until=? WHERE id=1 AND lease_until<=?').bind(token, now + 30000, now).run();
   if (!claimed.meta.changes) return false;
@@ -988,7 +988,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       } else {
       const approval = command.target && !command.target.startsWith('task:') ? undefined
-        : await db.prepare(`SELECT id,source_update,title,status FROM approval_requests WHERE chat_id=? AND status='pending'
+        : await db.prepare(`SELECT id,source_update,title,goal_scoped,status FROM approval_requests WHERE chat_id=? AND status='pending'
           ${command.target?.startsWith('task:') ? 'AND source_update=?' : ''} ORDER BY created_at DESC LIMIT 1`)
           .bind(job.chat_id, ...(command.target?.startsWith('task:') ? [Number(command.target.slice(5))] : [])).first<Approval>();
       if (!approval) result = 'Hiện không có đề xuất nào đang chờ xác nhận.';
@@ -997,9 +997,23 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         result = `Đã bỏ đề xuất thêm việc: ${approval.title}`;
       } else {
         const taskId = `T${approval.source_update}`;
-        statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at) SELECT ?,?,?,?,? WHERE ${guard}`).bind(taskId, approval.title, normalize(approval.title), approval.source_update, now, ...args()));
-        statements.push(db.prepare(`UPDATE approval_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now, approval.id, ...args()));
-        result = `Đã xác nhận và thêm ${taskId}: ${approval.title}\nKhi xong, anh nhắn /done ${taskId}.`;
+        let goalId: number|null = null, goalTitle: string|undefined;
+        if (approval.goal_scoped) {
+          const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+            .bind(weekStart(now),job.chat_id).first<WeeklyPlan>();
+          const goal = plan ? (await ensurePlanItems(db,plan,now)).find(item=>item.kind==='goal') : undefined;
+          goalId = goal?.goal_id ?? null;
+          goalTitle = goal?.title;
+          if (!goalId) {
+            statements.push(db.prepare(`UPDATE approval_requests SET status='rejected',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,approval.id,...args()));
+            result = 'Mục tiêu tuần hiện tại không còn để gắn task này. Em đã bỏ đề xuất; anh có thể tạo lại bằng /add.';
+          }
+        }
+        if (result === '') {
+          statements.push(db.prepare(`INSERT INTO tasks(id,title,normalized_title,source_update,created_at,goal_id) SELECT ?,?,?,?,?,? WHERE ${guard}`).bind(taskId, approval.title, normalize(approval.title), approval.source_update, now, goalId, ...args()));
+          statements.push(db.prepare(`UPDATE approval_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now, approval.id, ...args()));
+          result = `Đã xác nhận và thêm ${taskId}: ${approval.title}${goalTitle ? `\nGắn với mục tiêu: ${goalTitle}.` : ''}\nKhi xong, anh nhắn /done ${taskId}.`;
+        }
       }
       }
       }
@@ -1012,14 +1026,26 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       result = `Em hiểu là anh muốn thêm task: “${title}”.\nAnh bấm nút để xác nhận hoặc bỏ qua.`;
       replyMarkup = confirmationButtons(`task:${job.update_id}`);
     }
+    else if (structuredAssistant && await reserveAi(db, now)) {
+      route = 'ai_intent';
+      aiStartedAt = Date.now();
+      const proposal = await structuredAssistant(job.text, recent);
+      aiFinishedAt = Date.now();
+      if (proposal.kind === 'add_task') {
+        statements.push(db.prepare(`INSERT INTO approval_requests(chat_id,source_update,title,goal_scoped,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)
+          .bind(job.chat_id,job.update_id,proposal.title,Number(proposal.goalScoped),now,...args()));
+        result = `Em hiểu anh muốn thêm task: “${proposal.title}”.${proposal.goalScoped ? '\nTask này sẽ gắn với mục tiêu tuần hiện tại.' : '\nĐây sẽ là việc riêng.'}\nAnh bấm nút để xác nhận hoặc bỏ qua.`;
+        replyMarkup = confirmationButtons(`task:${job.update_id}`);
+      } else result = proposal.text;
+    }
     else if (assistant && await reserveAi(db, now)) {
       route = 'ai';
       aiStartedAt = Date.now();
       result = await assistant(job.text, recent);
       aiFinishedAt = Date.now();
     } else {
-      route = assistant ? 'ai_budget_limited' : 'unrecognized';
-      result = assistant ? 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /help để xem các lệnh chắc chắn.' : 'Em chưa hiểu chắc yêu cầu này.\n' + help;
+      route = assistant || structuredAssistant ? 'ai_budget_limited' : 'unrecognized';
+      result = assistant || structuredAssistant ? 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /help để xem các lệnh chắc chắn.' : 'Em chưa hiểu chắc yêu cầu này.\n' + help;
     }
     // Lease serializes task writers; job result and outbox commit with the task change.
     statements.push(db.prepare(`INSERT INTO deliveries(job_id,chat_id,text,reply_markup) SELECT ?,?,?,? WHERE ${guard}`).bind(job.id, job.chat_id, result, replyMarkup ? JSON.stringify(replyMarkup) : null, ...args()));

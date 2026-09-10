@@ -1,5 +1,5 @@
 import { sendTyping, telegramSender } from '../adapters/telegram';
-import { openRouterAssistant } from '../adapters/openrouter';
+import { openRouterStructuredAssistant } from '../adapters/openrouter';
 import { processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, hasPending, ownerFor } from '../modules/execution/store';
 
 export default {
@@ -8,7 +8,7 @@ export default {
       try {
         const owner = await ownerFor(env.DB);
         if (owner) await sendTyping(env.TELEGRAM_BOT_TOKEN, owner.chat_id);
-        await processNext(env.DB, Date.now(), env.OPENROUTER_API_KEY ? openRouterAssistant(env.OPENROUTER_API_KEY) : undefined);
+        await processNext(env.DB, Date.now(), undefined, env.OPENROUTER_API_KEY ? openRouterStructuredAssistant(env.OPENROUTER_API_KEY) : undefined);
         await deliverNext(env.DB, telegramSender(env.TELEGRAM_BOT_TOKEN));
         if (await hasPending(env.DB)) await env.JOBS_QUEUE.send({wake:true}, {delaySeconds:5});
         message.ack();

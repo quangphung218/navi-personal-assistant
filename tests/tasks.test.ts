@@ -20,9 +20,11 @@ import foundationsMigration from '../migrations/0018_goal_habit_foundations.sql?
 import backfillHabitDatesMigration from '../migrations/0019_backfill_habit_checkin_dates.sql?raw';
 import measurementRequestsMigration from '../migrations/0020_checkin_measurement_requests.sql?raw';
 import latencyMetricsMigration from '../migrations/0021_job_latency_metrics.sql?raw';
+import aiTaskProposalsMigration from '../migrations/0022_ai_task_proposals.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
+import { openRouterStructuredAssistant } from '../src/adapters/openrouter';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
 import { pilotConversationCorpus, pilotExecutionWalkthrough } from './fixtures/pilot-conversation-corpus';
@@ -47,7 +49,7 @@ async function replies() {
 beforeEach(async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200})));
   for(const table of ['checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -72,6 +74,10 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('Tuần này anh ưu tiên apply, cần sửa CV cho vị trí mobile trước.'))
       .toEqual({kind:'add',title:'sửa CV cho vị trí mobile',goalScoped:true});
     expect(parseCommand('Tuần này anh cần làm gì?')).toEqual({kind:'unknown'});
+  });
+  it('accepts only a valid structured AI task proposal',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'{"kind":"add_task","title":"Tùy biến CV","goalScoped":true}'}}]}),{status:200})));
+    await expect(openRouterStructuredAssistant('test-key')('CV của anh còn chung chung')).resolves.toEqual({kind:'add_task',title:'Tùy biến CV',goalScoped:true});
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();
@@ -603,6 +609,24 @@ describe('task conversation on real D1 bindings',()=>{
     await processNext(db,now,async()=>{aiCalls++; return 'Không được dùng';});
     expect(aiCalls).toBe(0);
     expect((await tasks(db))[0]).toMatchObject({title:'sửa CV cho vị trí mobile',goal_title:'Tìm việc phù hợp'});
+  });
+  it('turns an AI task proposal into a confirmation before it mutates the goal',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Tìm việc phù hợp'],[4,'Apply 5 jobs'],[5,'Thiền 5 phút'],[6,'Nghe tiếng Anh'],[7,'đúng']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    await accept(db,update(8,'Em thấy CV của anh đang chung chung, nên xử lý thế nào?'),false,now);
+    await processNext(db,now,undefined,async()=>({kind:'add_task',title:'Tùy biến CV cho vị trí Mobile',goalScoped:true}));
+    expect(await tasks(db)).toEqual([]);
+    expect(await db.prepare('SELECT title,goal_scoped,status FROM approval_requests WHERE source_update=8').first())
+      .toMatchObject({title:'Tùy biến CV cho vị trí Mobile',goal_scoped:1,status:'pending'});
+    const proposal=await db.prepare('SELECT text,reply_markup FROM deliveries ORDER BY job_id DESC LIMIT 1').first<{text:string;reply_markup:string}>();
+    expect(proposal?.text).toContain('sẽ gắn với mục tiêu tuần hiện tại');
+    expect(JSON.parse(proposal!.reply_markup).inline_keyboard[0][0].callback_data).toBe('_navi:confirm:task:8');
+    await replies();
+    await accept(db,update(9,'_navi:confirm:task:8'),false,now); await processNext(db,now); await replies();
+    expect((await tasks(db))[0]).toMatchObject({id:'T8',title:'Tùy biến CV cho vị trí Mobile',goal_title:'Tìm việc phù hợp'});
   });
   it('continues a goal into the next week without creating a second identity',async()=>{
     const now=Date.now(), local=new Date(now+7*60*60*1000), day=(local.getUTCDay()+6)%7;

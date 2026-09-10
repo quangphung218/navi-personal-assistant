@@ -361,3 +361,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: Navi hiểu câu ưu tiên tuần như “Tuần này anh ưu tiên apply, cần sửa CV cho vị trí mobile trước” thành một task gắn vào mục tiêu hiện hành. Câu hỏi như “Tuần này anh cần làm gì?” không bị hiểu nhầm là task.
 - An toàn và tốc độ: module chỉ nhận dạng mẫu có độ chắc chắn cao. Các ý định khác không tạo mutation từ suy đoán; chúng giữ luồng fallback hiện tại. Câu nhận dạng được xử lý nội bộ, không gọi AI.
 - Đã kiểm chứng: `npm run check` pass với 56 tests, typecheck và Worker build dry-run. Regression test phủ câu ưu tiên tuần, scope mục tiêu và không gọi AI fallback.
+
+## 2026-09-10 — Đề xuất task bằng AI có xác nhận
+
+- Đã làm: fallback OpenRouter chuyển sang structured assistant. Model chỉ có hai đầu ra hợp lệ: đề xuất thêm task (`title`, `goalScoped`) hoặc một câu trả lời/nghi vấn ngắn. Parser adapter kiểm tra JSON và dùng câu hỏi an toàn nếu output không hợp lệ.
+- Đã làm: đề xuất AI tạo `approval_request`, không tạo task. Tin nhắn nêu rõ task sẽ gắn mục tiêu tuần hay là việc riêng; chỉ callback Xác nhận mới tạo task. Nếu mục tiêu tuần không còn khi xác nhận, đề xuất bị bỏ thay vì tạo task sai phạm vi.
+- Dữ liệu: migration `0022_ai_task_proposals.sql` thêm cờ `goal_scoped` vào approval request và đã áp dụng remote.
+- Đã kiểm chứng: `npm run check` pass với 58 tests, typecheck và Worker build dry-run. Ca mới phủ schema JSON model, không mutation trước xác nhận và task được gắn đúng mục tiêu sau xác nhận.

@@ -376,3 +376,24 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: `/goal history` hiển thị mỗi mục tiêu với trạng thái, số tuần theo dõi và số task mở. Lịch sử không bị ghi đè khi đổi tên.
 - Dữ liệu: migration `0023_goal_rename_requests.sql` thêm hàng chờ đổi tên và đã áp dụng remote.
 - Đã kiểm chứng: `npm run check` pass với 58 tests, typecheck và Worker build dry-run. Ca mới phủ parser, đổi tên có xác nhận, bảo toàn identity, history và archive.
+
+## 2026-09-11 — Focus agent theo dữ liệu tuần
+
+- Bối cảnh: cần thử agent hữu ích trong Navi mà không tăng quyền tự động hoặc thêm một runtime Python/dịch vụ mới.
+- Đã làm:
+  - `src/adapters/openrouter.ts`: thêm `openRouterFocusAssistant`, giới hạn brief 5.000 ký tự và kết quả 500 ký tự; prompt buộc dùng dữ liệu được cấp, trả một hành động nhỏ và không nói đã thay đổi dữ liệu.
+  - `src/modules/execution/store.ts`: thêm `/focus`, dựng brief từ mục tiêu, kế hoạch, tối đa sáu task mở và sáu check-in gần nhất. Route được ghi là `ai_focus`; luồng chỉ tạo phản hồi outbox, không tạo/sửa/xóa task, goal hay check-in.
+  - `src/modules/work/commands.ts`, `config/telegram-commands.json`: đưa `/focus` vào parser, trợ giúp và Telegram command menu.
+  - `tests/tasks.test.ts`: kiểm tra brief bị giới hạn, phản hồi AI không mutation, telemetry route và adapter; ổn định test check-in qua nửa đêm bằng mốc 23:55 của ngày chạy thay vì ngày lịch đã qua.
+- Quyết định: agent chỉ chạy khi người dùng chủ động dùng `/focus`, dùng chung ngân sách AI dự phòng hiện có; `/review` vẫn là tổng kết deterministic và `/insights` vẫn là telemetry nhận diện check-in.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 60 tests, typecheck và hai Worker build dry-run.
+- Chưa làm / giới hạn: chưa tự gửi insight định kỳ, chưa đo chất lượng gợi ý trên dữ liệu pilot, và model vẫn có thể trả lời kém hữu ích dù không có quyền mutation.
+- Chi phí / dữ liệu / rủi ro: mỗi `/focus` dự trữ một lượt từ cap AI tháng hiện có; brief chỉ chứa dữ liệu tuần cần cho gợi ý, không gửi toàn bộ lịch sử hội thoại.
+- Bước tiếp theo: cập nhật command menu Telegram, deploy Processor và đánh giá gợi ý bằng vài tuần dữ liệu thật trước khi tự động hóa lịch gửi.
+
+## 2026-09-11 — Kích hoạt Focus agent trên pilot
+
+- Đã làm: Telegram command menu đã nhận `/focus`; Processor đã deploy bản có Focus agent.
+- Đã kiểm chứng: `telegram:menu` xác nhận 15 lệnh; Worker `personal-assistant-processor` version `da082b85-45ee-4992-a033-d8c459f01cd5` đang nhận Queue consumer, producer và Cron 5 phút.
+- Chưa làm / giới hạn: chưa có kiểm chứng phản hồi OpenRouter trên dữ liệu pilot thật; `/focus` chỉ chạy khi người dùng gọi lệnh.
+- Bước tiếp theo: gọi `/focus` vài lần trong tuần, đánh giá gợi ý có đúng trọng tâm và có dẫn đến hành động thực tế hay không.

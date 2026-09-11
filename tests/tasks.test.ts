@@ -25,7 +25,7 @@ import goalRenameMigration from '../migrations/0023_goal_rename_requests.sql?raw
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
-import { openRouterStructuredAssistant } from '../src/adapters/openrouter';
+import { openRouterFocusAssistant, openRouterStructuredAssistant } from '../src/adapters/openrouter';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
 import { pilotConversationCorpus, pilotExecutionWalkthrough } from './fixtures/pilot-conversation-corpus';
@@ -54,12 +54,13 @@ beforeEach(async()=>{
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
-    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','goal','today','schedule','review','progress','insights','export','add','list','done','reminders','status','help']);
+    expect(telegramMenuCommands.map(item=>item.command)).toEqual(['week','goal','today','schedule','review','progress','insights','focus','export','add','list','done','reminders','status','help']);
     expect(telegramMenuCommands.every(item => /^[a-z0-9_]{1,32}$/.test(item.command) && item.description.length > 0 && item.description.length <= 256)).toBe(true);
     expect(parseCommand('/progress')).toEqual({kind:'progressList',page:0});
     expect(parseCommand('/add mục tiêu: Viết README')).toEqual({kind:'add',title:'Viết README',goalScoped:true});
     expect(parseCommand('/status')).toEqual({kind:'systemStatus'});
     expect(parseCommand('/insights')).toEqual({kind:'insights'});
+    expect(parseCommand('/focus')).toEqual({kind:'focus'});
     expect(parseCommand('/export json')).toEqual({kind:'export',format:'json'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
@@ -81,6 +82,30 @@ describe('task conversation on real D1 bindings',()=>{
   it('accepts only a valid structured AI task proposal',async()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'{"kind":"add_task","title":"Tùy biến CV","goalScoped":true}'}}]}),{status:200})));
     await expect(openRouterStructuredAssistant('test-key')('CV của anh còn chung chung')).resolves.toEqual({kind:'add_task',title:'Tùy biến CV',goalScoped:true});
+  });
+  it('uses the focus assistant only to suggest one next action from a bounded weekly brief',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng'],[8,'/add Viết README']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    await accept(db,update(9,'/focus'),false,now);
+    let brief='';
+    await processNext(db,now,undefined,undefined,async value=>{
+      brief=value;
+      return 'Điểm cần chú ý: chưa có check-in.\nViệc tiếp theo: dành 10 phút viết README.\nVì sao: đây là task đang mở hỗ trợ mục tiêu.';
+    });
+    const response=(await replies()).at(-1) ?? '';
+    expect(brief).toContain('Mục tiêu: Ship Navi');
+    expect(brief).toContain('T8: Viết README');
+    expect(response).toContain('Gợi ý ưu tiên');
+    expect(response).toContain('Việc tiếp theo: dành 10 phút viết README.');
+    expect(await db.prepare("SELECT route FROM job_metrics WHERE job_id=(SELECT id FROM jobs WHERE update_id=9)").first()).toMatchObject({route:'ai_focus'});
+    expect(await db.prepare('SELECT COUNT(*) AS count FROM tasks').first<{count:number}>()).toMatchObject({count:1});
+  });
+  it('configures the focus assistant with a bounded Vietnamese review response',async()=>{
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'Điểm cần chú ý: tiến độ chậm.\nViệc tiếp theo: hoàn thành README.\nVì sao: task này đang mở.'}}]}),{status:200})));
+    await expect(openRouterFocusAssistant('test-key')('Tuần 2026-09-07')).resolves.toContain('Việc tiếp theo: hoàn thành README.');
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();
@@ -703,13 +728,17 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare("SELECT status FROM checkin_measurement_requests WHERE source_update=8").first()).toMatchObject({status:'recorded'});
   });
   it('keeps the original day across midnight and supports scoped cancellation and expiry',async()=>{
-    const now=Date.parse('2026-09-10T23:55:00+07:00');
+    const localNow=new Date(Date.now()+7*60*60*1000);
+    localNow.setUTCHours(23,55,0,0);
+    const now=localNow.getTime()-7*60*60*1000;
+    const originalDate=new Date(now+7*60*60*1000).toISOString().slice(0,10);
+    const [year,month,day]=originalDate.split('-').map(Number);
     await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
     for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Thiền 5 phút'],[6,'Nghe tiếng Anh 10 phút'],[7,'đúng'],[8,'Hôm nay anh đã thiền']] as const) {
       await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
     }
     await accept(db,update(9,'5 phút'),false,now+10*60*1000); await processNext(db,now+10*60*1000); await replies();
-    expect(await db.prepare('SELECT local_date,actual_value FROM weekly_checkins').first()).toMatchObject({local_date:'2026-09-10',actual_value:5});
+    expect(await db.prepare('SELECT local_date,actual_value FROM weekly_checkins').first()).toMatchObject({local_date:originalDate,actual_value:5});
     await accept(db,update(10,'/today'),false,now+10*60*1000); await processNext(db,now+10*60*1000);
     const today=(await replies()).at(-1)!;
     expect(today).toContain('Chuỗi hiện tại: 1 ngày');
@@ -720,7 +749,7 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare("SELECT source_update FROM checkin_measurement_requests WHERE status='pending'").first()).toMatchObject({source_update:12});
     await accept(db,update(14,'/cancelmeasurement'),false,now+20*60*1000); await processNext(db,now+20*60*1000); await replies();
     expect(await db.prepare("SELECT id FROM checkin_measurement_requests WHERE status='pending'").first()).toBeNull();
-    await accept(db,update(15,'Ngày 10/9 anh đã thiền'),false,now+20*60*1000); await processNext(db,now+20*60*1000); await replies();
+    await accept(db,update(15,`Ngày ${day}/${month}/${year} anh đã thiền`),false,now+20*60*1000); await processNext(db,now+20*60*1000); await replies();
     const request=await db.prepare('SELECT created_at,expires_at FROM checkin_measurement_requests WHERE source_update=15').first<{created_at:number;expires_at:number}>();
     expect(request!.expires_at-request!.created_at).toBe(24*60*60*1000);
     await accept(db,update(16,'5 phút'),false,request!.expires_at+1); await processNext(db,request!.expires_at+1);

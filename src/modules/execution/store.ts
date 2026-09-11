@@ -1,6 +1,6 @@
 import { help, normalize, parseCommand, parseNaturalAdd } from '../work/commands';
 import type { ReplyMarkup, TelegramUpdate, Sender } from '../../adapters/telegram';
-import type { Assistant, StructuredAssistant } from '../../adapters/openrouter';
+import type { Assistant, FocusAssistant, StructuredAssistant } from '../../adapters/openrouter';
 
 type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number };
 type Task = { id: string; title: string; status: 'open' | 'done'; revision: number; due_at?: number|null; goal_id?: number|null; goal_title?: string|null };
@@ -450,6 +450,26 @@ async function insightsSummary(db: D1Database, chatId: string, now: number): Pro
   return `Tín hiệu check-in tuần này\n• Ghi thẳng: ${counts.get('recorded') ?? 0}\n• Ghi sau khi anh chọn: ${counts.get('selected') ?? 0}\n• Chưa nối được mục: ${counts.get('unmatched') ?? 0}\n• Đang chờ chọn: ${pending?.count ?? 0}\n\nEm dùng các số này để biết câu nào cần bổ sung vào corpus, không lưu thêm nội dung tin nhắn.`;
 }
 
+async function focusBrief(db: D1Database, plan: WeeklyPlan, now: number): Promise<string> {
+  const [items, open, checkins] = await Promise.all([
+    ensurePlanItems(db, plan, now),
+    tasks(db),
+    db.prepare(`SELECT i.kind,i.title,c.quantity,c.local_date,c.actual_value,c.met_threshold
+      FROM weekly_checkins c JOIN weekly_plan_items i ON i.id=c.plan_item_id
+      WHERE c.week_start=? ORDER BY c.occurred_at DESC,c.id DESC LIMIT 6`).bind(plan.week_start)
+      .all<{kind:PlanItem['kind'];title:string;quantity:number;local_date:string|null;actual_value:number|null;met_threshold:number|null}>(),
+  ]);
+  const planLines = items.map(item => {
+    const progress = item.metric === 'completion' ? (item.status === 'completed' ? 'đã hoàn thành' : 'chưa hoàn thành') : `${item.completed}/${item.target_count}`;
+    return `- ${item.kind}: ${item.title} — ${progress}`;
+  });
+  const taskLines = open.length ? open.slice(0,6).map(task => `- ${task.id}: ${task.title}${task.goal_title ? ` (hỗ trợ ${task.goal_title})` : ' (việc riêng)'}`) : ['- không có task mở'];
+  const checkinLines = checkins.results.length
+    ? checkins.results.map(checkin => `- ${checkin.kind}: ${checkin.title} — ${checkin.quantity}${checkin.local_date ? `, ngày ${checkin.local_date}` : ''}${checkin.actual_value !== null ? `, ${checkin.actual_value} phút` : ''}${checkin.met_threshold === 0 ? ', chưa đạt ngưỡng' : ''}`)
+    : ['- chưa có check-in'];
+  return `Tuần ${plan.week_start}\nMục tiêu: ${plan.goal}\nCam kết: ${plan.commitment}\n\nTiến độ kế hoạch:\n${planLines.join('\n')}\n\nTask mở:\n${taskLines.join('\n')}\n\nCheck-in gần nhất:\n${checkinLines.join('\n')}`;
+}
+
 async function exportSummary(db: D1Database, chatId: string, now: number, format: 'markdown'|'json'): Promise<string> {
   const currentWeek = weekStart(now);
   const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
@@ -488,7 +508,7 @@ export async function reserveAi(db: D1Database, now = Date.now()): Promise<boole
 }
 
 // All mutations in the personal conversation share this lease. Every write is fenced.
-export async function processNext(db: D1Database, now = Date.now(), assistant?: Assistant, structuredAssistant?: StructuredAssistant): Promise<boolean> {
+export async function processNext(db: D1Database, now = Date.now(), assistant?: Assistant, structuredAssistant?: StructuredAssistant, focusAssistant?: FocusAssistant): Promise<boolean> {
   const token = crypto.randomUUID();
   const claimed = await db.prepare('UPDATE owner SET lease_token=?,lease_until=? WHERE id=1 AND lease_until<=?').bind(token, now + 30000, now).run();
   if (!claimed.meta.changes) return false;
@@ -510,7 +530,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'measurement' && command.kind !== 'cancelMeasurement' && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'checkInChange' && command.kind !== 'checkInSelect' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'measurement' && command.kind !== 'cancelMeasurement' && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'checkInChange' && command.kind !== 'checkInSelect' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'focus' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
@@ -668,6 +688,21 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           result = summary.text;
           replyMarkup = summary.replyMarkup;
         }
+      }
+    } else if (command.kind === 'focus') {
+      const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+        .bind(weekStart(now), job.chat_id).first<WeeklyPlan>();
+      if (!plan) result = 'Tuần này chưa có kế hoạch để em đưa gợi ý. Anh nhắn /week để lập kế hoạch nhé.';
+      else if (!focusAssistant) result = 'Review AI hiện chưa được cấu hình. Anh vẫn có thể dùng /review để xem tổng kết theo dữ liệu.';
+      else if (await reserveAi(db, now)) {
+        route = 'ai_focus';
+        aiStartedAt = Date.now();
+        const suggestion = await focusAssistant(await focusBrief(db,plan,now));
+        aiFinishedAt = Date.now();
+        result = `Gợi ý ưu tiên\n${suggestion}`;
+      } else {
+        route = 'ai_budget_limited';
+        result = 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /review để xem tổng kết theo dữ liệu.';
       }
     } else if (command.kind === 'reminders') {
       const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(job.chat_id).first<ReminderPreference>();

@@ -4,6 +4,7 @@ const MODEL = 'deepseek/deepseek-v4-flash';
 export type Assistant = (text: string, context?: string) => Promise<string>;
 export type TaskProposal = { kind:'add_task'; title:string; goalScoped:boolean } | { kind:'reply'; text:string };
 export type StructuredAssistant = (text: string, context?: string) => Promise<TaskProposal>;
+export type FocusAssistant = (brief: string) => Promise<string>;
 
 export function openRouterAssistant(apiKey: string): Assistant {
   return async (text, context = '') => {
@@ -63,5 +64,25 @@ export function openRouterStructuredAssistant(apiKey: string): StructuredAssista
     const body: unknown = await response.json();
     const content = (body as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content;
     return parseStructuredReply(content);
+  };
+}
+
+export function openRouterFocusAssistant(apiKey: string): FocusAssistant {
+  return async (brief) => {
+    const response = await fetch(ENDPOINT, {
+      method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: MODEL,
+        messages: [
+          { role:'system', content:'Em là trợ lý review tuần cho một người dùng Việt Nam. Chỉ dùng dữ liệu trong brief. Trả lời tối đa 500 ký tự, tiếng Việt, đúng ba dòng: “Điểm cần chú ý: …”, “Việc tiếp theo: …”, “Vì sao: …”. Đề xuất đúng một hành động nhỏ có thể làm ngay. Không bịa dữ liệu, không nói đã lưu/đổi/xóa gì, không ra lệnh tự động, không dùng markdown.' },
+          { role:'user', content:`Brief dữ liệu tuần:\n${brief.slice(0,5000)}` },
+        ], temperature:0.2, max_tokens:180,
+      }), signal:AbortSignal.timeout(15_000),
+    });
+    if (!response.ok) throw new Error('openrouter_http_error');
+    const body: unknown = await response.json();
+    const content = (body as { choices?: Array<{ message?: { content?: unknown } }> }).choices?.[0]?.message?.content;
+    if (typeof content !== 'string' || content.trim().length === 0) throw new Error('openrouter_invalid_response');
+    return content.trim().slice(0,500);
   };
 }

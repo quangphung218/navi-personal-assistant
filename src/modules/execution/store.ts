@@ -310,6 +310,13 @@ function confirmationButtons(target: string): ReplyMarkup {
 
 const progressButton: ReplyMarkup = { inline_keyboard: [[{ text: 'Xem tiến độ', callback_data: '_navi:show:progress' }]] };
 
+function focusFeedbackButtons(jobId: number): ReplyMarkup {
+  return { inline_keyboard: [[
+    { text:'Hữu ích', callback_data:`_navi:focus:feedback:${jobId}:helpful` },
+    { text:'Chưa đúng', callback_data:`_navi:focus:feedback:${jobId}:not_helpful` },
+  ]] };
+}
+
 function progressPageButtons(page: number, hasNext: boolean): ReplyMarkup | undefined {
   const buttons = [] as Array<{text:string;callback_data:string}>;
   if (page > 0) buttons.push({text:'‹ Trang trước',callback_data:`_navi:show:progress:${page-1}`});
@@ -530,7 +537,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const draft = await db.prepare("SELECT id,chat_id,step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?").bind(job.chat_id).first<WeeklyDraft>();
     if (job.attempts >= 3) {
       result = 'Em chưa xử lý được yêu cầu này sau ba lần thử. Anh gửi lại yêu cầu giúp em; em chưa đánh dấu việc đã xong.';
-    } else if (draft && command.kind !== 'measurement' && command.kind !== 'cancelMeasurement' && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'checkInChange' && command.kind !== 'checkInSelect' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'focus' && command.kind !== 'help') {
+    } else if (draft && command.kind !== 'measurement' && command.kind !== 'cancelMeasurement' && command.kind !== 'week' && command.kind !== 'weekStatus' && command.kind !== 'progressList' && command.kind !== 'progressChange' && command.kind !== 'checkInChange' && command.kind !== 'checkInSelect' && command.kind !== 'today' && command.kind !== 'schedule' && command.kind !== 'defer' && command.kind !== 'clearSchedule' && command.kind !== 'review' && command.kind !== 'reminders' && command.kind !== 'focus' && command.kind !== 'focusFeedback' && command.kind !== 'help') {
       const value = job.text.trim().replace(/\s+/g, ' ');
       if (draft.step === 'confirm') {
         if (command.kind === 'confirm' && (!command.target || command.target === `weekly:${draft.week_start}`)) {
@@ -689,7 +696,29 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           replyMarkup = summary.replyMarkup;
         }
       }
+    } else if (command.kind === 'focusFeedback') {
+      const focusJob = await db.prepare(`SELECT j.id FROM jobs j JOIN job_metrics m ON m.job_id=j.id
+        WHERE j.id=? AND j.chat_id=? AND j.status='done' AND m.route='ai_focus'`).bind(command.focusJobId,job.chat_id).first<{id:number}>();
+      const existing = focusJob ? await db.prepare('SELECT verdict FROM focus_feedback WHERE focus_job_id=? AND chat_id=?').bind(focusJob.id,job.chat_id).first<{verdict:'helpful'|'not_helpful'}>() : undefined;
+      if (!focusJob) result = 'Đánh giá này không còn gắn với một gợi ý hợp lệ của anh.';
+      else if (existing) result = 'Anh đã đánh giá gợi ý này rồi. Em giữ nguyên đánh giá đầu tiên để số liệu không bị lệch.';
+      else {
+        statements.push(db.prepare(`INSERT INTO focus_feedback(chat_id,focus_job_id,verdict,created_at)
+          SELECT ?,?,?,? WHERE ${guard}`).bind(job.chat_id,focusJob.id,command.verdict,now,...args()));
+        result = command.verdict === 'helpful'
+          ? 'Đã ghi nhận gợi ý này hữu ích. Em sẽ tiếp tục giữ cách gợi ý ngắn và có hành động cụ thể.'
+          : 'Đã ghi nhận gợi ý này chưa đúng. Em sẽ dùng tín hiệu này để chỉnh cách chọn trọng tâm.';
+      }
     } else if (command.kind === 'focus') {
+      if (command.status) {
+        const feedback = await db.prepare(`SELECT COUNT(*) AS total,
+          SUM(CASE WHEN verdict='helpful' THEN 1 ELSE 0 END) AS helpful,
+          SUM(CASE WHEN verdict='not_helpful' THEN 1 ELSE 0 END) AS not_helpful
+          FROM focus_feedback WHERE chat_id=?`).bind(job.chat_id).first<{total:number;helpful:number|null;not_helpful:number|null}>();
+        const total = feedback?.total ?? 0, helpful = feedback?.helpful ?? 0, notHelpful = feedback?.not_helpful ?? 0;
+        result = total === 0 ? 'Focus chưa có đánh giá nào. Sau mỗi gợi ý, anh bấm “Hữu ích” hoặc “Chưa đúng” để em đo chất lượng.'
+          : `Đánh giá Focus\n• Đã đánh giá: ${total} gợi ý\n• Hữu ích: ${helpful}\n• Chưa đúng: ${notHelpful}\n• Tỷ lệ hữu ích: ${Math.round(helpful / total * 100)}%\n\nĐây là tín hiệu pilot, chưa đủ để tự thay đổi kế hoạch của anh.`;
+      } else {
       const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
         .bind(weekStart(now), job.chat_id).first<WeeklyPlan>();
       if (!plan) result = 'Tuần này chưa có kế hoạch để em đưa gợi ý. Anh nhắn /week để lập kế hoạch nhé.';
@@ -700,9 +729,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         const suggestion = await focusAssistant(await focusBrief(db,plan,now));
         aiFinishedAt = Date.now();
         result = `Gợi ý ưu tiên\n${suggestion}`;
+        replyMarkup = focusFeedbackButtons(job.id);
       } else {
         route = 'ai_budget_limited';
         result = 'Tháng này em đã chạm ngân sách AI dự phòng. Anh dùng /review để xem tổng kết theo dữ liệu.';
+      }
       }
     } else if (command.kind === 'reminders') {
       const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(job.chat_id).first<ReminderPreference>();

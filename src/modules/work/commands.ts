@@ -14,7 +14,8 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
   | { kind: 'goal'; action: 'show'|'history'|'complete'|'reopen'|'archive'|'rename'|'attach'|'detach'; taskId?: string; title?:string }
   | { kind: 'checkInSelect'; sourceUpdate: number; itemId: number }
   | { kind: 'reminders'; enabled?: boolean } | { kind: 'export'; format: 'markdown'|'json' }
-  | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'focus' } | { kind: 'status' }
+  | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'focus'; status?: boolean }
+  | { kind: 'focusFeedback'; focusJobId: number; verdict: 'helpful'|'not_helpful' } | { kind: 'status' }
   | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
@@ -30,6 +31,8 @@ export function parseCommand(text: string): Command {
   if (progressPage) return { kind:'progressList',page:Number(progressPage[1]) };
   const checkInSelect = value.match(/^_navi:checkin:select:(\d+):(\d+)$/iu);
   if (checkInSelect) return { kind: 'checkInSelect', sourceUpdate: Number(checkInSelect[1]), itemId: Number(checkInSelect[2]) };
+  const focusFeedback = value.match(/^_navi:focus:feedback:(\d+):(helpful|not_helpful)$/iu);
+  if (focusFeedback) return { kind:'focusFeedback',focusJobId:Number(focusFeedback[1]),verdict:focusFeedback[2]!.toLowerCase() as 'helpful'|'not_helpful' };
   const taskAction = value.match(/^_navi:task:(done|defer|clear):(T\d+)$/iu);
   if (taskAction) return taskAction[1] === 'done' ? { kind: 'done', reference: taskAction[2]!.toUpperCase() }
     : taskAction[1] === 'defer' ? { kind: 'defer', reference: taskAction[2]!.toUpperCase() } : { kind: 'clearSchedule', reference: taskAction[2]!.toUpperCase() };
@@ -56,6 +59,7 @@ export function parseCommand(text: string): Command {
   if (/^(?:\/list(?:@\w+)?|anh còn việc gì\??|còn việc gì\??|danh sách(?: công việc)?|xem công việc)$/iu.test(value)) return { kind: 'list', includeDone: false };
   if (/^\/status(?:@\w+)?$/iu.test(value)) return { kind: 'systemStatus' };
   if (/^\/insights(?:@\w+)?$/iu.test(value)) return { kind: 'insights' };
+  if (/^\/focus(?:@\w+)?\s+status$/iu.test(value)) return { kind: 'focus',status:true };
   if (/^\/focus(?:@\w+)?$/iu.test(value)) return { kind: 'focus' };
   if (/^\/export(?:@\w+)?$/iu.test(value)) return { kind: 'export', format: 'markdown' };
   if (/^\/export(?:@\w+)?\s+json$/iu.test(value)) return { kind: 'export', format: 'json' };
@@ -134,5 +138,5 @@ export function parseNaturalAdd(text: string): string | undefined {
   const title = match[1]!.trim().replace(/[.!?]+$/g, '').replace(/\s+/g, ' ');
   return title.length > 0 && title.length <= 180 ? title : undefined;
 }
-export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/progress 2 — xem trang lịch sử tiếp theo\n/insights — xem mức Navi hiểu check-in tuần này\n/focus — một gợi ý ưu tiên từ dữ liệu tuần\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\nNếu Navi hỏi số phút, anh chỉ cần trả lời: 5 phút\n\nTask\n/add Viết README — việc riêng\n/add mục tiêu: Viết README — việc cho mục tiêu tuần\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;
+export const help = `Anh bấm Menu bên cạnh ô chat, hoặc gõ / để chọn lệnh.\n\nMỗi ngày\n/today — việc và tiến độ hôm nay\n/schedule T12 10/9 09:00 — đặt giờ nhắc task\n/review — tổng kết tuần\n/review carry T12 — đưa task sang tuần mới\n\nKế hoạch tuần\n/week — lập kế hoạch\n/progress — xem tiến độ và lịch sử\n/progress 2 — xem trang lịch sử tiếp theo\n/insights — xem mức Navi hiểu check-in tuần này\n/focus — một gợi ý ưu tiên từ dữ liệu tuần\n/focus status — xem đánh giá gợi ý\n\nGhi nhận nhanh\nAnh đã apply job Backend Developer\nNgày 7/9 anh đã chạy bộ\nAnh đã public Navi lên GitHub\nAnh đã đọc sách\nNếu Navi hỏi số phút, anh chỉ cần trả lời: 5 phút\n\nTask\n/add Viết README — việc riêng\n/add mục tiêu: Viết README — việc cho mục tiêu tuần\n/list — việc chưa xong\n/done T123 — hoàn thành theo mã\n\nNhắc tiến độ\n/reminders — xem trạng thái\n/reminders off — tắt nhắc\n/reminders on — bật lại\n\nDữ liệu\n/export — bản sao dễ đọc\n/export json — bản sao máy đọc được\n\nTrạng thái Navi\n/status — xem dữ liệu vận hành vừa đọc được\n\nKết quả chỉ được ghi khi Navi nối được với đúng mục trong kế hoạch tuần.`;
 import { interpretConversationalIntent } from './intent';

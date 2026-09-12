@@ -397,3 +397,24 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: `telegram:menu` xác nhận 15 lệnh; Worker `personal-assistant-processor` version `da082b85-45ee-4992-a033-d8c459f01cd5` đang nhận Queue consumer, producer và Cron 5 phút.
 - Chưa làm / giới hạn: chưa có kiểm chứng phản hồi OpenRouter trên dữ liệu pilot thật; `/focus` chỉ chạy khi người dùng gọi lệnh.
 - Bước tiếp theo: gọi `/focus` vài lần trong tuần, đánh giá gợi ý có đúng trọng tâm và có dẫn đến hành động thực tế hay không.
+
+## 2026-09-12 — Feedback loop cho Focus agent
+
+- Bối cảnh: `/focus` đã có thể đưa gợi ý nhưng chưa có tín hiệu để biết gợi ý có giúp người dùng hành động hay không.
+- Đã làm:
+  - `migrations/0024_focus_feedback.sql`: thêm bảng feedback tối thiểu, gắn một đánh giá duy nhất với một focus job và chat owner.
+  - `src/modules/work/commands.ts`: thêm callback feedback và `/focus status`.
+  - `src/modules/execution/store.ts`: mỗi gợi ý AI có nút `Hữu ích`/`Chưa đúng`; callback chỉ hợp lệ cho `ai_focus` job đã hoàn thành của cùng chat. `/focus status` tổng hợp tổng số, hai loại đánh giá và tỷ lệ hữu ích; không gọi AI.
+  - `tests/tasks.test.ts`: kiểm tra feedback gắn đúng job, chống bấm lặp và báo cáo tỷ lệ; fixture chạy migration mới.
+- Quyết định: giữ đánh giá đầu tiên để tránh số liệu bị thay đổi bởi bấm lại; feedback không lưu nội dung chat, không thay đổi task/kế hoạch và không tự sửa prompt.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 60 tests, typecheck và hai Worker build dry-run.
+- Chưa làm / giới hạn: chưa có đủ dữ liệu pilot để kết luận prompt hiệu quả; `/focus status` là số liệu mô tả, không suy ra chất lượng thực tế chỉ từ tỷ lệ nhỏ.
+- Chi phí / dữ liệu / rủi ro: feedback không gọi model; bảng mới chỉ lưu chat ID, job ID, verdict và thời điểm.
+- Bước tiếp theo: áp dụng migration, deploy Processor, rồi dùng đánh giá trong vài tuần trước khi tinh chỉnh agent hoặc tạo agent lập kế hoạch.
+
+## 2026-09-12 — Kích hoạt Focus feedback trên pilot
+
+- Đã làm: migration `0024_focus_feedback.sql` đã tạo bảng feedback và record migration trên D1 pilot; Processor đã deploy bản hỗ trợ feedback.
+- Đã kiểm chứng: D1 remote xác nhận `focus_feedback` tồn tại và migration record bằng `1/1`; Processor version `a8812e48-3e92-40fe-ae40-462504ae4f80` đang gắn Queue consumer, producer và Cron 5 phút.
+- Giới hạn vận hành: `wrangler d1 migrations apply` bị Cloudflare API trả `7403` dù `whoami` xác nhận đúng account và quyền D1. Migration được thực hiện qua `wrangler d1 execute --file`, rồi ghi cùng tên vào `d1_migrations`; schema và ledger đã được kiểm tra trước deploy.
+- Bước tiếp theo: dùng `/focus`, bấm một trong hai nút đánh giá và xem `/focus status` sau khi có vài gợi ý.

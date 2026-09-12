@@ -22,6 +22,7 @@ import measurementRequestsMigration from '../migrations/0020_checkin_measurement
 import latencyMetricsMigration from '../migrations/0021_job_latency_metrics.sql?raw';
 import aiTaskProposalsMigration from '../migrations/0022_ai_task_proposals.sql?raw';
 import goalRenameMigration from '../migrations/0023_goal_rename_requests.sql?raw';
+import focusFeedbackMigration from '../migrations/0024_focus_feedback.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -49,8 +50,8 @@ async function replies() {
 }
 beforeEach(async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200})));
-  for(const table of ['goal_rename_requests','checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';'), ...goalRenameMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['focus_feedback','goal_rename_requests','checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';'), ...goalRenameMigration.split(';'), ...focusFeedbackMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -61,6 +62,8 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/status')).toEqual({kind:'systemStatus'});
     expect(parseCommand('/insights')).toEqual({kind:'insights'});
     expect(parseCommand('/focus')).toEqual({kind:'focus'});
+    expect(parseCommand('/focus status')).toEqual({kind:'focus',status:true});
+    expect(parseCommand('_navi:focus:feedback:9:helpful')).toEqual({kind:'focusFeedback',focusJobId:9,verdict:'helpful'});
     expect(parseCommand('/export json')).toEqual({kind:'export',format:'json'});
     expect(parseCommand('/reminders off')).toEqual({kind:'reminders',enabled:false});
     expect(parseCommand('/schedule T12 10/9 09:00')).toEqual({kind:'schedule',reference:'T12',day:10,month:9,year:undefined,hour:9,minute:0});
@@ -102,6 +105,17 @@ describe('task conversation on real D1 bindings',()=>{
     expect(response).toContain('Việc tiếp theo: dành 10 phút viết README.');
     expect(await db.prepare("SELECT route FROM job_metrics WHERE job_id=(SELECT id FROM jobs WHERE update_id=9)").first()).toMatchObject({route:'ai_focus'});
     expect(await db.prepare('SELECT COUNT(*) AS count FROM tasks').first<{count:number}>()).toMatchObject({count:1});
+    const delivery = await db.prepare('SELECT reply_markup FROM deliveries WHERE job_id=9').first<{reply_markup:string}>();
+    expect(JSON.parse(delivery!.reply_markup)).toEqual({inline_keyboard:[[
+      {text:'Hữu ích',callback_data:'_navi:focus:feedback:9:helpful'},
+      {text:'Chưa đúng',callback_data:'_navi:focus:feedback:9:not_helpful'},
+    ]]});
+    await accept(db,update(10,'_navi:focus:feedback:9:helpful'),false,now); await processNext(db,now); await replies();
+    expect(await db.prepare('SELECT verdict FROM focus_feedback WHERE focus_job_id=9').first()).toMatchObject({verdict:'helpful'});
+    await accept(db,update(11,'_navi:focus:feedback:9:not_helpful'),false,now); await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('đánh giá gợi ý này rồi');
+    await accept(db,update(12,'/focus status'),false,now); await processNext(db,now);
+    expect((await replies()).at(-1)).toContain('Tỷ lệ hữu ích: 100%');
   });
   it('configures the focus assistant with a bounded Vietnamese review response',async()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'Điểm cần chú ý: tiến độ chậm.\nViệc tiếp theo: hoàn thành README.\nVì sao: task này đang mở.'}}]}),{status:200})));

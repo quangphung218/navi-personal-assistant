@@ -1,4 +1,5 @@
 import { help, normalize, parseCommand, parseNaturalAdd } from '../work/commands';
+import { buildConversationContext } from '../context/pack';
 import type { ReplyMarkup, TelegramUpdate, Sender } from '../../adapters/telegram';
 import type { Assistant, FocusAssistant, StructuredAssistant } from '../../adapters/openrouter';
 
@@ -527,8 +528,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const args = () => [token, Date.now(), job.id];
     const statements: D1PreparedStatement[] = [];
     const command = parseCommand(job.text);
-    const recent = (await db.prepare("SELECT direction,text FROM conversation_messages WHERE chat_id=? ORDER BY created_at DESC,id DESC LIMIT 12").bind(job.chat_id).all<{direction:'inbound'|'outbound';text:string}>()).results.reverse()
-      .map(m => `${m.direction === 'inbound' ? 'Anh' : 'Navi'}: ${m.text.slice(0, 500)}`).join('\n');
+    const recent = await buildConversationContext(db,job.chat_id,now);
     let result = '';
     let replyMarkup: ReplyMarkup | undefined;
     let route = 'local';

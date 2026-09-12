@@ -418,3 +418,23 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: D1 remote xác nhận `focus_feedback` tồn tại và migration record bằng `1/1`; Processor version `a8812e48-3e92-40fe-ae40-462504ae4f80` đang gắn Queue consumer, producer và Cron 5 phút.
 - Giới hạn vận hành: `wrangler d1 migrations apply` bị Cloudflare API trả `7403` dù `whoami` xác nhận đúng account và quyền D1. Migration được thực hiện qua `wrangler d1 execute --file`, rồi ghi cùng tên vào `d1_migrations`; schema và ledger đã được kiểm tra trước deploy.
 - Bước tiếp theo: dùng `/focus`, bấm một trong hai nút đánh giá và xem `/focus status` sau khi có vài gợi ý.
+
+## 2026-09-12 — Context pack có cấu trúc cho hội thoại
+
+- Bối cảnh: fallback DeepSeek trước đây chỉ nhận một đoạn lịch sử chat gần đây, nên phải tự suy trạng thái kế hoạch, task và câu hỏi đang chờ.
+- Đã làm:
+  - `src/modules/context/pack.ts`: thêm module có một interface `buildConversationContext`. Module đọc state từ các bảng sở hữu dữ liệu và trả brief có nhãn nguồn, giới hạn 3.800 ký tự.
+  - Context gồm kế hoạch tuần active, tối đa ba task mở gần nhất, draft/approval/đổi tên/check-in đang chờ và sáu lượt hội thoại gần nhất.
+  - `src/modules/execution/store.ts`: structured assistant fallback dùng context pack thay lịch sử 12 tin thô.
+  - `tests/tasks.test.ts`: kiểm tra model nhận đúng mục tiêu, task và yêu cầu số phút đang chờ, đồng thời giữ giới hạn kích thước brief.
+- Quyết định: state không được sao chép vào một bộ nhớ mơ hồ; context pack chỉ đọc từ dữ liệu nghiệp vụ canonical. Parser local vẫn xử lý các mẫu có độ chắc chắn cao mà không gọi model.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 61 tests, typecheck và hai Worker build dry-run.
+- Chưa làm / giới hạn: chưa hỗ trợ Telegram reply-to-message, chưa có memory dài hạn có xác nhận, và chưa cần semantic/vector search khi dữ liệu chưa lớn.
+- Chi phí / dữ liệu / rủi ro: không thêm dịch vụ hoặc migration; brief bị giới hạn trước khi gửi OpenRouter nhưng vẫn chứa title task/kế hoạch cần cho mục đích hội thoại.
+- Bước tiếp theo: deploy Processor và dùng các câu tham chiếu thực tế để mở rộng corpus trước khi thêm memory dài hạn.
+
+## 2026-09-12 — Kích hoạt context pack trên pilot
+
+- Đã làm: Processor đã deploy bản dùng context pack trước khi gọi structured assistant.
+- Đã kiểm chứng: Worker `personal-assistant-processor` version `0cd360b0-aad2-48bb-9c05-b545f7e49e2` đang nhận Queue consumer, producer và Cron 5 phút.
+- Bước tiếp theo: quan sát `/status` và các câu nói ngữ cảnh trong pilot; ưu tiên thêm reply-to-message khi có tình huống không thể xác định chỉ từ state hiện tại.

@@ -121,6 +121,25 @@ describe('task conversation on real D1 bindings',()=>{
     vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({choices:[{message:{content:'Điểm cần chú ý: tiến độ chậm.\nViệc tiếp theo: hoàn thành README.\nVì sao: task này đang mở.'}}]}),{status:200})));
     await expect(openRouterFocusAssistant('test-key')('Tuần 2026-09-07')).resolves.toContain('Việc tiếp theo: hoàn thành README.');
   });
+  it('builds a bounded, source-labelled context pack for the structured assistant',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Thiền 5 phút'],[6,'Đọc sách'],[7,'đúng'],[8,'/add Viết README'],[9,'Anh đã thiền']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    await accept(db,update(10,'Em nhắc anh việc nào phù hợp nhất?'),false,now);
+    let context='';
+    await processNext(db,now,undefined,async (_text, value)=>{
+      context=value ?? '';
+      return {kind:'reply',text:'Em sẽ dựa trên kế hoạch tuần để gợi ý.'};
+    });
+    expect(context).toContain('Kế hoạch tuần');
+    expect(context).toContain('mục tiêu “Ship Navi”');
+    expect(context).toContain('Task mở gần đây: T8 “Viết README”');
+    expect(context).toContain('chờ số phút cho thói quen “Thiền 5 phút”');
+    expect(context.length).toBeLessThanOrEqual(3800);
+    expect(await db.prepare("SELECT route FROM job_metrics WHERE job_id=(SELECT id FROM jobs WHERE update_id=10)").first()).toMatchObject({route:'ai_intent'});
+  });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();
     await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();

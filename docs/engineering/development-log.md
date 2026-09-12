@@ -459,3 +459,15 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: D1 remote xác nhận `reply_to_message_id`, `telegram_message_id` và migration record bằng `1/1/1`. Ingress version `6723bbf8-2762-45ca-bd80-88e18a2af8cb`; Processor version `7e4b01a3-27b1-419a-a68e-25d294efbb27`.
 - Giới hạn vận hành: dùng đường `d1 execute --file` và ghi record vào `d1_migrations`, theo workaround đã kiểm chứng cho lỗi `7403` của `migrations apply`; không deploy Processor trước khi kiểm tra schema.
 - Bước tiếp theo: anh reply trực tiếp vào một tin Navi cũ rồi nhắn “việc này…” để kiểm tra trải nghiệm thực tế.
+
+## 2026-09-12 — Mở rộng pilot corpus cho ngữ cảnh
+
+- Bối cảnh: cần đưa các tình huống context mới vào regression suite trước khi bổ sung memory hoặc parser rule khác.
+- Đã làm:
+  - `tests/fixtures/pilot-conversation-corpus.ts`: bổ sung command corpus cho focus, task/goal contextual và câu mơ hồ; thêm ba reply-context case giả lập.
+  - `tests/tasks.test.ts`: chạy mọi reply-context case qua job/D1/context pack, kiểm tra source Telegram được ưu tiên.
+  - `docs/engineering/pilot-corpus.md`: ghi cách khử định danh và phân loại case mới từ pilot.
+- Quyết định: câu mơ hồ giữ `unknown` và chỉ dùng structured assistant; corpus không chứa chat, URL, ID Telegram hoặc dữ liệu hồ sơ thật.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 63 tests, typecheck và hai Worker build dry-run.
+- Chưa làm / giới hạn: corpus hiện là seed giả lập, chưa thay thế đánh giá trên dữ liệu pilot thật; mỗi case thực cần được khử định danh trước khi thêm.
+- Bước tiếp theo: khi gặp một câu Navi hiểu sai, thêm case tối thiểu vào corpus và chọn parser local hoặc context/model test phù hợp.

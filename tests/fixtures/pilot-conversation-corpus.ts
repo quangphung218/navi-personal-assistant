@@ -15,10 +15,25 @@ export const pilotConversationCorpus = [
   { text: '/progress', kind: 'progressList', outcome: 'read' },
   { text: '/review', kind: 'review', outcome: 'read' },
   { text: '/today', kind: 'today', outcome: 'read' },
+  { text: '/focus status', kind: 'focus', outcome: 'read' },
   { text: 'Anh còn việc gì?', kind: 'list', outcome: 'read' },
+  { text: 'Mục tiêu này xong rồi', kind: 'goal', outcome: 'confirm' },
+  { text: 'Gắn task này vào mục tiêu', kind: 'goal', outcome: 'contextual' },
+  { text: 'Task này để tuần sau', kind: 'review', outcome: 'contextual' },
+  { text: 'Tuần này anh ưu tiên apply, cần sửa CV cho vị trí mobile trước.', kind: 'add', outcome: 'contextual' },
+  { text: 'Việc này nên làm trước thế nào?', kind: 'unknown', outcome: 'ask' },
+  { text: 'Mục tiêu nào đang ưu tiên?', kind: 'unknown', outcome: 'ask' },
   { text: 'Cảm ơn em', kind: 'thanks', outcome: 'non_mutating' },
   { text: 'Hủy', kind: 'reject', outcome: 'non_mutating' },
   { text: 'Anh đang suy nghĩ thêm', kind: 'unknown', outcome: 'non_mutating' },
+] as const;
+
+// Không dùng hội thoại thật. Mỗi case giả lập câu được reply để context pack phải ưu tiên
+// reference Telegram thay vì suy đoán từ vị trí tin nhắn gần nhất.
+export const pilotReplyContextCorpus = [
+  { source: 'Task CV mobile cần sửa phần thành tích', reply: 'Việc này nên làm trước thế nào?' },
+  { source: 'Mục tiêu tuần này là cập nhật portfolio', reply: 'Mục tiêu này có cần thêm task không?' },
+  { source: 'Anh cần gửi năm hồ sơ trong tuần này', reply: 'Cam kết này đang thiếu gì?' },
 ] as const;
 
 // Các câu này được chạy qua webhook → inbox → Processor → outbox/D1 trong test,

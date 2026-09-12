@@ -30,7 +30,7 @@ import { parseCommand } from '../src/modules/work/commands';
 import { openRouterFocusAssistant, openRouterStructuredAssistant } from '../src/adapters/openrouter';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
-import { pilotConversationCorpus, pilotExecutionWalkthrough } from './fixtures/pilot-conversation-corpus';
+import { pilotConversationCorpus, pilotExecutionWalkthrough, pilotReplyContextCorpus } from './fixtures/pilot-conversation-corpus';
 const db = env.DB;
 function update(id: number, text: string, user=123): TelegramUpdate {
   return { update_id:id, message:{from:{id:user,is_bot:false},chat:{id:user,type:'private'},text} };
@@ -159,6 +159,20 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare('SELECT reply_to_message_id FROM jobs WHERE update_id=3').first()).toMatchObject({reply_to_message_id:700});
     expect(context).toContain('Tin anh đang trả lời: Anh: Task CV mobile cần sửa phần thành tích');
     expect((await replies()).at(-1)).toContain('Em đã nhận được tham chiếu task.');
+  });
+  it('keeps every anonymized reply-context case anchored to its Telegram source',async()=>{
+    const now=Date.now();
+    await accept(db,{...update(1,'/start secret'),message:{...update(1,'/start secret').message!,message_id:1001}},true,now); await processNext(db,now); await replies();
+    for (const [index,sample] of pilotReplyContextCorpus.entries()) {
+      const sourceUpdate=10+index*2, replyUpdateId=sourceUpdate+1, sourceMessageId=700+index;
+      await accept(db,{update_id:sourceUpdate,message:{message_id:sourceMessageId,from:{id:123,is_bot:false},chat:{id:123,type:'private'},text:sample.source}},false,now);
+      await processNext(db,now); await replies();
+      await accept(db,replyUpdate(replyUpdateId,sample.reply,sourceMessageId),false,now);
+      let context='';
+      await processNext(db,now,undefined,async (_text,value)=>{ context=value ?? ''; return {kind:'reply',text:'Đã nhận tham chiếu.'}; });
+      expect(context).toContain(`Tin anh đang trả lời: Anh: ${sample.source}`);
+      await replies();
+    }
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();

@@ -9,8 +9,8 @@ function shorten(value: string, limit: number): string {
 
 // The interface is deliberately one read: callers receive a bounded, source-labelled brief.
 // Pending state stays in its owning tables; this module only composes it for conversation.
-export async function buildConversationContext(db: D1Database, chatId: string, now = Date.now()): Promise<string> {
-  const [plan, tasks, draft, approval, rename, measurement, selection, messages] = await Promise.all([
+export async function buildConversationContext(db: D1Database, chatId: string, now = Date.now(), replyToMessageId?: number): Promise<string> {
+  const [plan, tasks, draft, approval, rename, measurement, selection, messages, replied] = await Promise.all([
     db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE chat_id=? AND status='active' ORDER BY week_start DESC LIMIT 1")
       .bind(chatId).first<Plan>(),
     db.prepare(`SELECT t.id,t.title,g.title AS goal_title FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id
@@ -28,6 +28,11 @@ export async function buildConversationContext(db: D1Database, chatId: string, n
       .bind(chatId,now).first<{text:string}>(),
     db.prepare("SELECT direction,text FROM conversation_messages WHERE chat_id=? ORDER BY created_at DESC,id DESC LIMIT 6")
       .bind(chatId).all<Message>(),
+    replyToMessageId === undefined ? Promise.resolve(undefined) : db.prepare(`SELECT text,'outbound' AS direction FROM deliveries
+      WHERE chat_id=? AND message_id=?
+      UNION ALL
+      SELECT text,direction FROM conversation_messages WHERE chat_id=? AND telegram_message_id=?
+      LIMIT 1`).bind(chatId,replyToMessageId,chatId,replyToMessageId).first<Message>(),
   ]);
   const sections: string[] = [];
   if (plan) sections.push(`Kế hoạch tuần ${plan.week_start}: mục tiêu “${shorten(plan.goal,160)}”; cam kết “${shorten(plan.commitment,160)}”; thói quen “${shorten([plan.habit1,plan.habit2].filter(Boolean).join(' / '),180)}”.`);
@@ -39,6 +44,7 @@ export async function buildConversationContext(db: D1Database, chatId: string, n
   if (measurement) pending.push(`chờ số phút cho thói quen “${shorten(measurement.title,120)}” ngày ${measurement.local_date}`);
   if (selection) pending.push(`chờ chọn mục check-in cho “${shorten(selection.text,140)}”`);
   if (pending.length) sections.push(`Trạng thái đang chờ: ${pending.join('; ')}.`);
+  if (replied) sections.push(`Tin anh đang trả lời: ${replied.direction === 'inbound' ? 'Anh' : 'Navi'}: ${shorten(replied.text,500)}`);
   const recent = messages.results.reverse();
   if (recent.length) sections.push(`Hội thoại gần đây:\n${recent.map(message => `${message.direction === 'inbound' ? 'Anh' : 'Navi'}: ${shorten(message.text,240)}`).join('\n')}`);
   return sections.join('\n\n').slice(0,3800);

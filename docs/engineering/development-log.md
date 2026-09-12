@@ -438,3 +438,24 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: Processor đã deploy bản dùng context pack trước khi gọi structured assistant.
 - Đã kiểm chứng: Worker `personal-assistant-processor` version `0cd360b0-aad2-48bb-9c05-b545f7e49e2` đang nhận Queue consumer, producer và Cron 5 phút.
 - Bước tiếp theo: quan sát `/status` và các câu nói ngữ cảnh trong pilot; ưu tiên thêm reply-to-message khi có tình huống không thể xác định chỉ từ state hiện tại.
+
+## 2026-09-12 — Reply-to-message cho context hội thoại
+
+- Bối cảnh: state hiện tại không luôn xác định được “việc này” khi có nhiều task hoặc tin đã trôi khỏi lịch sử gần nhất.
+- Đã làm:
+  - `migrations/0025_reply_context.sql`: thêm ID tin đang được reply vào job và ID Telegram vào inbound conversation message.
+  - `src/adapters/telegram.ts`: nhận `message_id` và `reply_to_message.message_id` từ Telegram webhook.
+  - `src/modules/context/pack.ts`: ưu tiên nội dung tin được reply, tra từ delivery của Navi hoặc inbound message của anh; context chỉ dùng reference chính xác, không suy đoán.
+  - `src/modules/execution/store.ts`: lưu reference cùng job trước khi acknowledge và đưa nó vào context pack khi xử lý.
+  - `tests/tasks.test.ts`: kiểm tra reference inbound được lưu bền vững và xuất hiện trước recent context của structured assistant.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 62 tests, typecheck và hai Worker build dry-run.
+- Chưa làm / giới hạn: reply tới media/voice không có text không tạo context nội dung; reply giúp model hiểu câu nói nhưng không tự cho phép mutation mơ hồ.
+- Chi phí / dữ liệu / rủi ro: không gọi thêm AI, chỉ lưu ID Telegram số nguyên; nội dung reply đã nằm trong conversation/delivery hiện có và vẫn bị giới hạn trong context pack.
+- Bước tiếp theo: áp dụng migration, deploy Ingress và Processor, rồi quan sát các câu reply thực tế trước khi thêm memory dài hạn.
+
+## 2026-09-12 — Kích hoạt reply context trên pilot
+
+- Đã làm: migration `0025_reply_context.sql` đã áp dụng và ghi migration record trên D1; Ingress và Processor đã deploy bản reply context.
+- Đã kiểm chứng: D1 remote xác nhận `reply_to_message_id`, `telegram_message_id` và migration record bằng `1/1/1`. Ingress version `6723bbf8-2762-45ca-bd80-88e18a2af8cb`; Processor version `7e4b01a3-27b1-419a-a68e-25d294efbb27`.
+- Giới hạn vận hành: dùng đường `d1 execute --file` và ghi record vào `d1_migrations`, theo workaround đã kiểm chứng cho lỗi `7403` của `migrations apply`; không deploy Processor trước khi kiểm tra schema.
+- Bước tiếp theo: anh reply trực tiếp vào một tin Navi cũ rồi nhắn “việc này…” để kiểm tra trải nghiệm thực tế.

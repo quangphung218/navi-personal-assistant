@@ -3,9 +3,14 @@ import { z } from 'zod';
 export const updateSchema = z.object({
   update_id: z.number().int().nonnegative().safe(),
   message: z.object({
+    message_id: z.number().int().positive().safe().optional(),
     from: z.object({ id: z.number().int().positive().safe(), is_bot: z.boolean() }),
     chat: z.object({ id: z.number().int().safe(), type: z.string() }),
     text: z.string().max(4096).optional(),
+    reply_to_message: z.object({
+      message_id: z.number().int().positive().safe(),
+      text: z.string().max(4096).optional(),
+    }).optional(),
   }).optional(),
   callback_query: z.object({
     id: z.string().min(1).max(128),

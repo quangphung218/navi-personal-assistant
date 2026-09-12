@@ -3,7 +3,7 @@ import { buildConversationContext } from '../context/pack';
 import type { ReplyMarkup, TelegramUpdate, Sender } from '../../adapters/telegram';
 import type { Assistant, FocusAssistant, StructuredAssistant } from '../../adapters/openrouter';
 
-type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number };
+type Job = { id: number; update_id: number; chat_id: string; text: string; attempts: number; reply_to_message_id:number|null };
 type Task = { id: string; title: string; status: 'open' | 'done'; revision: number; due_at?: number|null; goal_id?: number|null; goal_title?: string|null };
 type Approval = { id: number; source_update: number; title: string; goal_scoped: number; status: 'pending' };
 type WeeklyDraft = { id: 1; chat_id: string; step: 'goal'|'commitment'|'habit1'|'habit2'|'confirm'; goal: string|null; commitment: string|null; habit1: string|null; habit2: string|null; week_start: string };
@@ -362,13 +362,13 @@ export async function accept(db: D1Database, update: TelegramUpdate, bootstrap: 
   const userId = String(m.from.id), chatId = String(m.chat.id);
   const statements: D1PreparedStatement[] = [];
   if (bootstrap) statements.push(db.prepare('INSERT OR IGNORE INTO owner(id,user_id,chat_id,linked_at) VALUES(1,?,?,?)').bind(userId, chatId, now));
-  statements.push(db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,created_at)
-    SELECT ?,?,?,?,? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
-    .bind(update.update_id, userId, chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, now, userId, chatId));
+  statements.push(db.prepare(`INSERT OR IGNORE INTO jobs(update_id,user_id,chat_id,text,reply_to_message_id,created_at)
+    SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
+    .bind(update.update_id, userId, chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, m.reply_to_message?.message_id ?? null, now, userId, chatId));
   statements.push(db.prepare('INSERT OR IGNORE INTO job_metrics(job_id,queued_at) SELECT id,created_at FROM jobs WHERE update_id=?').bind(update.update_id));
-  statements.push(db.prepare(`INSERT OR IGNORE INTO conversation_messages(chat_id,direction,text,update_id,created_at)
-    SELECT ?, 'inbound', ?, ?, ? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
-    .bind(chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, update.update_id, now, userId, chatId));
+  statements.push(db.prepare(`INSERT OR IGNORE INTO conversation_messages(chat_id,direction,text,update_id,telegram_message_id,created_at)
+    SELECT ?, 'inbound', ?, ?, ?, ? WHERE EXISTS(SELECT 1 FROM owner WHERE id=1 AND user_id=? AND chat_id=?)`)
+    .bind(chatId, bootstrap || /^\/start\s+[a-f0-9]{64}$/.test(m.text) ? '/start' : m.text, update.update_id, m.message_id ?? null, now, userId, chatId));
   const results = await db.batch(statements);
   return (results.at(-1)?.meta.changes ?? 0) > 0;
 }
@@ -521,14 +521,14 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
   const claimed = await db.prepare('UPDATE owner SET lease_token=?,lease_until=? WHERE id=1 AND lease_until<=?').bind(token, now + 30000, now).run();
   if (!claimed.meta.changes) return false;
   try {
-    const job = await db.prepare("SELECT id,update_id,chat_id,text,attempts FROM jobs WHERE status='pending' ORDER BY id LIMIT 1").first<Job>();
+    const job = await db.prepare("SELECT id,update_id,chat_id,text,attempts,reply_to_message_id FROM jobs WHERE status='pending' ORDER BY id LIMIT 1").first<Job>();
     if (!job) return false;
     await db.prepare('UPDATE job_metrics SET processing_started_at=COALESCE(processing_started_at,?) WHERE job_id=?').bind(now, job.id).run();
     const guard = `EXISTS(SELECT 1 FROM owner WHERE id=1 AND lease_token=? AND lease_until>?) AND EXISTS(SELECT 1 FROM jobs WHERE id=? AND status='pending')`;
     const args = () => [token, Date.now(), job.id];
     const statements: D1PreparedStatement[] = [];
     const command = parseCommand(job.text);
-    const recent = await buildConversationContext(db,job.chat_id,now);
+    const recent = await buildConversationContext(db,job.chat_id,now,job.reply_to_message_id ?? undefined);
     let result = '';
     let replyMarkup: ReplyMarkup | undefined;
     let route = 'local';

@@ -23,6 +23,7 @@ import latencyMetricsMigration from '../migrations/0021_job_latency_metrics.sql?
 import aiTaskProposalsMigration from '../migrations/0022_ai_task_proposals.sql?raw';
 import goalRenameMigration from '../migrations/0023_goal_rename_requests.sql?raw';
 import focusFeedbackMigration from '../migrations/0024_focus_feedback.sql?raw';
+import replyContextMigration from '../migrations/0025_reply_context.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -36,6 +37,10 @@ function update(id: number, text: string, user=123): TelegramUpdate {
 }
 function callbackUpdate(id: number, data: string, user=123): TelegramUpdate {
   return { update_id:id, callback_query:{id:`callback-${id}`,from:{id:user,is_bot:false},message:{chat:{id:user,type:'private'}},data} };
+}
+function replyUpdate(id: number, text: string, replyToMessageId: number, user=123): TelegramUpdate {
+  return { update_id:id, message:{message_id:id+1000,from:{id:user,is_bot:false},chat:{id:user,type:'private'},text,
+    reply_to_message:{message_id:replyToMessageId,text:'Tin được reply'}} };
 }
 async function receive(value: unknown, secret='test-webhook-secret') {
   const ctx=createExecutionContext();
@@ -51,7 +56,7 @@ async function replies() {
 beforeEach(async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200})));
   for(const table of ['focus_feedback','goal_rename_requests','checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';'), ...goalRenameMigration.split(';'), ...focusFeedbackMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';'), ...goalRenameMigration.split(';'), ...focusFeedbackMigration.split(';'), ...replyContextMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -139,6 +144,21 @@ describe('task conversation on real D1 bindings',()=>{
     expect(context).toContain('chờ số phút cho thói quen “Thiền 5 phút”');
     expect(context.length).toBeLessThanOrEqual(3800);
     expect(await db.prepare("SELECT route FROM job_metrics WHERE job_id=(SELECT id FROM jobs WHERE update_id=10)").first()).toMatchObject({route:'ai_intent'});
+  });
+  it('puts the exact replied-to Telegram message ahead of ordinary recent context',async()=>{
+    const now=Date.now();
+    await accept(db,{...update(1,'/start secret'),message:{...update(1,'/start secret').message!,message_id:1001}},true,now); await processNext(db,now); await replies();
+    const original: TelegramUpdate={update_id:2,message:{message_id:700,from:{id:123,is_bot:false},chat:{id:123,type:'private'},text:'Task CV mobile cần sửa phần thành tích'}};
+    await accept(db,original,false,now); await processNext(db,now); await replies();
+    await accept(db,replyUpdate(3,'Việc này nên ưu tiên thế nào?',700),false,now);
+    let context='';
+    await processNext(db,now,undefined,async (_text,value)=>{
+      context=value ?? '';
+      return {kind:'reply',text:'Em đã nhận được tham chiếu task.'};
+    });
+    expect(await db.prepare('SELECT reply_to_message_id FROM jobs WHERE update_id=3').first()).toMatchObject({reply_to_message_id:700});
+    expect(context).toContain('Tin anh đang trả lời: Anh: Task CV mobile cần sửa phần thành tích');
+    expect((await replies()).at(-1)).toContain('Em đã nhận được tham chiếu task.');
   });
   it('handles the inline progress button through the Telegram callback ingress path',async()=>{
     const now=Date.now();

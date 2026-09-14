@@ -512,3 +512,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; Processor version `fb352055-ac15-4fc4-82a9-852f2038a7eb` đã deploy.
 - Giới hạn: Navi mới đọc khung giờ và policy để đặt ngữ cảnh/gợi ý, chưa có ước lượng thời lượng task hay tự tính sức chứa tuần.
 - Bước tiếp theo: thêm thời lượng task và tổng ngân sách tuần để báo quá tải có số liệu.
+
+## 2026-09-14 — Ngân sách thời gian tuần
+
+- Đã làm: migration `0027_weekly_capacity.sql` thêm `estimated_minutes` cho task và bảng ngân sách tuần. `/estimate T123 45` đặt thời lượng task; `/capacity 6h` đặt ngân sách tuần. Khi bắt đầu `/week`, Navi so tổng task mở đã ước tính với ngân sách và chỉ cảnh báo/đề xuất khi vượt.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; migration ledger `0027_weekly_capacity.sql` tồn tại trên D1 pilot; Processor `589d59c0-cdc2-44b1-8ab3-58c5348945bd` đã deploy.
+- Giới hạn: chỉ task có ước tính mới được tính; thời lượng habit/cam kết chưa được cộng vào ngân sách.
+- Bước tiếp theo: thêm thời lượng cho habit và cam kết, rồi hiển thị tổng tải đầy đủ trong review tuần.

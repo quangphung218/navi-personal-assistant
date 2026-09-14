@@ -608,6 +608,8 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       if (existing) result = `Tuần bắt đầu ${date} đã có kế hoạch. Anh dùng /week status để xem tiến độ hoặc /review để tổng kết.`;
       else {
         const profile=await db.prepare('SELECT work_window,overload_policy,current_focus FROM operating_profiles WHERE chat_id=?').bind(job.chat_id).first<{work_window:string|null;overload_policy:string|null;current_focus:string|null}>();
+        const capacity=await db.prepare('SELECT minutes FROM weekly_capacities WHERE chat_id=? AND week_start=?').bind(job.chat_id,date).first<{minutes:number}>();
+        const estimated=await db.prepare("SELECT COALESCE(SUM(estimated_minutes),0) AS minutes FROM tasks WHERE status='open'").first<{minutes:number}>();
         const carryovers = (await db.prepare(`SELECT t.id,t.title FROM weekly_task_carryovers c JOIN tasks t ON t.id=c.task_id
           WHERE c.week_start=? AND t.status='open' ORDER BY t.created_at,t.id`).bind(date).all<{id:string;title:string}>()).results;
         const previous = command.continueGoal ? await db.prepare("SELECT goal FROM weekly_plans WHERE chat_id=? AND status='active' AND week_start<? ORDER BY week_start DESC LIMIT 1")
@@ -616,7 +618,9 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         else {
           statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,goal,week_start,created_at) SELECT 1,?,?,?,?,? WHERE ${guard}`)
             .bind(job.chat_id,previous ? 'commitment' : 'goal',previous?.goal ?? null,date,now,...args()));
-          result = `Mình lập kế hoạch tuần bắt đầu ${date} nhé.${profile?.current_focus ? `\n\nTrọng tâm hiện tại: ${profile.current_focus}.` : ''}${profile?.work_window ? `\nKhung giờ anh đã đặt: ${profile.work_window}.` : ''}${profile?.overload_policy ? `\nNếu quá tải, em sẽ đề xuất: ${profile.overload_policy}.` : ''}${previous ? `\n\nTiếp tục mục tiêu: ${previous.goal}.` : ''}${carryovers.length ? `\n\nTask giữ từ tuần trước:\n${carryovers.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\n${previous ? 'Cam kết cá nhân tuần này của anh là gì?' : 'Mục tiêu công việc quan trọng nhất của anh là gì?'}`;
+          const estimatedMinutes=estimated?.minutes ?? 0;
+          const load=capacity ? `\nTải task đã ước tính: ${estimatedMinutes}/${capacity.minutes} phút${estimatedMinutes>capacity.minutes ? ' — đang vượt ngân sách; em sẽ đề xuất giảm scope hoặc dời task.' : ''}.` : '\nChưa có ngân sách giờ. Anh có thể đặt: /capacity 6h';
+          result = `Mình lập kế hoạch tuần bắt đầu ${date} nhé.${profile?.current_focus ? `\n\nTrọng tâm hiện tại: ${profile.current_focus}.` : ''}${profile?.work_window ? `\nKhung giờ anh đã đặt: ${profile.work_window}.` : ''}${profile?.overload_policy ? `\nNếu quá tải, em sẽ đề xuất: ${profile.overload_policy}.` : ''}${load}${previous ? `\n\nTiếp tục mục tiêu: ${previous.goal}.` : ''}${carryovers.length ? `\n\nTask giữ từ tuần trước:\n${carryovers.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\n${previous ? 'Cam kết cá nhân tuần này của anh là gì?' : 'Mục tiêu công việc quan trọng nhất của anh là gì?'}`;
         }
       }
     } else if (command.kind === 'goal') {
@@ -1007,6 +1011,15 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           result=`Đã thêm thói quen: ${command.title}.`;
         }
       }
+    } else if (command.kind === 'estimate') {
+      const task=await db.prepare("SELECT id,title FROM tasks WHERE id=? AND status='open'").bind(command.reference).first<{id:string;title:string}>();
+      if(!task) result='Em không thấy task đang mở này.';
+      else { statements.push(db.prepare(`UPDATE tasks SET estimated_minutes=? WHERE id=? AND status='open' AND ${guard}`).bind(command.minutes,task.id,...args())); result=`Đã ước tính ${task.id}: ${command.minutes} phút.`; }
+    } else if (command.kind === 'capacity') {
+      const week=weekStart(now);
+      statements.push(db.prepare(`INSERT INTO weekly_capacities(chat_id,week_start,minutes,updated_at) SELECT ?,?,?,? WHERE ${guard}
+        ON CONFLICT(chat_id,week_start) DO UPDATE SET minutes=excluded.minutes,updated_at=excluded.updated_at`).bind(job.chat_id,week,command.minutes,now,...args()));
+      result=`Đã đặt ngân sách tuần này: ${command.minutes} phút.`;
     } else if (command.kind === 'profile') {
       const labels={long_term_direction:'Hướng dài hạn',current_focus:'Trọng tâm hiện tại',work_window:'Khung giờ phù hợp',quiet_hours:'Giờ yên lặng',overload_policy:'Khi quá tải'} as const;
       const profile=await db.prepare('SELECT long_term_direction,current_focus,work_window,quiet_hours,overload_policy FROM operating_profiles WHERE chat_id=?').bind(job.chat_id).first<Record<keyof typeof labels,string|null>>();

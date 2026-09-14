@@ -16,6 +16,8 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
   | { kind: 'reminders'; enabled?: boolean } | { kind: 'export'; format: 'markdown'|'json' }
   | { kind: 'systemStatus' } | { kind: 'insights' } | { kind: 'focus'; status?: boolean }
   | { kind: 'focusFeedback'; focusJobId: number; verdict: 'helpful'|'not_helpful' } | { kind: 'status' }
+  | { kind: 'profile'; action:'show'|'set'|'clear'; field?:'long_term_direction'|'current_focus'|'work_window'|'quiet_hours'|'overload_policy'; value?:string }
+  | { kind: 'habit'; title?:string }
   | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
@@ -65,6 +67,18 @@ export function parseCommand(text: string): Command {
   if (/^\/export(?:@\w+)?\s+json$/iu.test(value)) return { kind: 'export', format: 'json' };
   if (/^(?:em đã thêm task chưa|anh đã thêm task chưa|task đó đã được thêm chưa|trạng thái task)$/iu.test(value)) return { kind: 'status' };
   if (/^\/(?:start|help)(?:@\w+)?$/iu.test(value)) return { kind: 'help' };
+  if (/^\/profile(?:@\w+)?$/iu.test(value)) return {kind:'profile',action:'show'};
+  const profile = value.match(/^\/profile(?:@\w+)?\s+(set|clear)\s+(direction|focus|work|quiet|overload)(?:\s+([\s\S]+))?$/iu);
+  if (profile) {
+    const fields={direction:'long_term_direction',focus:'current_focus',work:'work_window',quiet:'quiet_hours',overload:'overload_policy'} as const;
+    const field=fields[profile[2]!.toLowerCase() as keyof typeof fields];
+    const text=profile[3]?.trim().replace(/\s+/g,' ');
+    if (profile[1]!.toLowerCase()==='clear') return {kind:'profile',action:'clear',field};
+    if (text && text.length<=240) return {kind:'profile',action:'set',field,value:text};
+  }
+  const habit = value.match(/^\/habit(?:@\w+)?\s+add\s+([\s\S]+)$/iu);
+  if (habit) { const title=habit[1]!.trim().replace(/\s+/g,' '); if(title.length>1&&title.length<=180)return {kind:'habit',title}; }
+  if (/^\/habit(?:@\w+)?$/iu.test(value)) return {kind:'habit'};
   if (/^(?:\/today(?:@\w+)?|hôm nay có gì|hôm nay làm gì)$/iu.test(value)) return { kind: 'today' };
   const schedule = value.match(/^\/schedule(?:@\w+)?\s+(T\d+)\s+(\d{1,2})\/(\d{1,2})(?:\/(\d{4}))?\s+(\d{1,2})(?::(\d{2}))?$/iu);
   if (schedule) {

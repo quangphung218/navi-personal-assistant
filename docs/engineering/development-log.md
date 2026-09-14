@@ -492,3 +492,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: Worker `personal-assistant-processor` version `4b5af16b-e70c-47e0-9d21-3a1f04a2dd97` đang gắn Queue consumer, producer và Cron 5 phút; trước deploy, `npm exec --yes --package=node@24 -- npm run check` pass 66 tests.
 - Giới hạn vận hành: không có migration hay thay đổi Ingress. Chỉ reply một tin có đúng một mã task mở mới hoàn thành trực tiếp; các reply còn mơ hồ cần mã `/done T...`.
 - Bước tiếp theo: thử reply vào tin Navi có dòng `T...` và nhắn “task này xong rồi”; sau đó kiểm tra `/list`.
+
+## 2026-09-14 — Hồ sơ vận hành và thói quen bổ sung
+
+- Đã làm: migration `0026_operating_profile.sql` thêm hồ sơ vận hành; `/profile` xem hoặc đặt hướng, trọng tâm, khung giờ phù hợp, giờ yên lặng và cách xử lý quá tải. `/habit add ...` thêm thói quen thứ ba trở đi vào kế hoạch tuần hiện tại.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; D1 pilot có `operating_profiles`, `profile_change_requests` và ledger `0026_operating_profile.sql`; Processor version `b42e4deb-0964-40c5-b22a-5f6b34b8c58c` đã deploy.
+- Giới hạn: dữ liệu hồ sơ hiện là thông tin hỗ trợ context, chưa tự chặn thông báo theo giờ yên lặng hoặc tự xếp lịch. Thay đổi hồ sơ qua lệnh rõ ràng được lưu trực tiếp; bảng request dành cho luồng xác nhận sẽ dùng khi có sửa bằng ngôn ngữ tự nhiên.
+- Bước tiếp theo: dùng `/profile` để xem dữ liệu, đặt một trọng tâm hiện tại và thêm một habit; sau đó xây policy dùng giờ yên lặng/sức chứa vào gợi ý tuần.

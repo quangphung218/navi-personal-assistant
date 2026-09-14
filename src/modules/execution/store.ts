@@ -970,6 +970,36 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           .bind(id, command.title, normalize(command.title), job.update_id, now, goalId, ...args()));
         result = `Đã thêm ${id}: ${command.title}${goalTitle ? `\nGắn với mục tiêu: ${goalTitle}.` : '\nĐây là việc riêng.'}\nKhi xong, anh nhắn /done ${id}.`;
       }
+    } else if (command.kind === 'habit') {
+      const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(weekStart(now),job.chat_id).first<WeeklyPlan>();
+      if (!plan) result = 'Tuần này chưa có kế hoạch. Anh nhắn /week trước nhé.';
+      else if (!command.title) result = `${formatPlanItems(await ensurePlanItems(db,plan,now))}\n\nThêm: /habit add Tên thói quen`;
+      else {
+        const existing = await planItems(db,plan.week_start);
+        if (existing.some(item=>item.kind==='habit'&&item.normalized_title===normalize(command.title!))) result = 'Thói quen này đã có trong kế hoạch tuần.';
+        else {
+          const spec=habitSpec(command.title);
+          const position=Math.max(0,...existing.filter(item=>item.kind==='habit').map(item=>item.position))+1;
+          statements.push(db.prepare(`INSERT OR IGNORE INTO habit_definitions(chat_id,title,normalized_title,cadence,target_occurrences,minimum_value,minimum_unit,created_at) SELECT ?,?,?,?,?,?,?,? WHERE ${guard}`)
+            .bind(job.chat_id,command.title,normalize(command.title),spec.cadence,spec.target,spec.minimumValue ?? null,spec.minimumUnit ?? null,now,...args()));
+          const habit=await db.prepare('SELECT id FROM habit_definitions WHERE chat_id=? AND normalized_title=?').bind(job.chat_id,normalize(command.title)).first<{id:number}>();
+          statements.push(db.prepare(`INSERT INTO weekly_plan_items(week_start,kind,position,title,normalized_title,metric,target_count,habit_id,cadence,minimum_value,minimum_unit,created_at)
+            SELECT ?, 'habit', ?, ?, ?, 'count', ?, ?, ?, ?, ?, ? WHERE ${guard}`)
+            .bind(plan.week_start,position,command.title,normalize(command.title),spec.target,habit?.id ?? null,spec.cadence,spec.minimumValue ?? null,spec.minimumUnit ?? null,now,...args()));
+          result=`Đã thêm thói quen: ${command.title}.`;
+        }
+      }
+    } else if (command.kind === 'profile') {
+      const labels={long_term_direction:'Hướng dài hạn',current_focus:'Trọng tâm hiện tại',work_window:'Khung giờ phù hợp',quiet_hours:'Giờ yên lặng',overload_policy:'Khi quá tải'} as const;
+      const profile=await db.prepare('SELECT long_term_direction,current_focus,work_window,quiet_hours,overload_policy FROM operating_profiles WHERE chat_id=?').bind(job.chat_id).first<Record<keyof typeof labels,string|null>>();
+      if (command.action==='show') result=profile ? `Hồ sơ vận hành\n${Object.entries(labels).map(([field,label])=>`• ${label}: ${profile[field as keyof typeof labels] ?? 'chưa đặt'}`).join('\n')}\n\nSửa: /profile set focus ...` : 'Chưa có hồ sơ vận hành. Ví dụ: /profile set focus Hoàn thiện Navi trong tháng này';
+      else {
+        const label=labels[command.field!];
+        statements.push(db.prepare(`INSERT INTO operating_profiles(chat_id,${command.field},updated_at) SELECT ?,?,? WHERE ${guard}
+          ON CONFLICT(chat_id) DO UPDATE SET ${command.field}=excluded.${command.field},revision=operating_profiles.revision+1,updated_at=excluded.updated_at`)
+          .bind(job.chat_id,command.action==='clear'?null:command.value!,now,...args()));
+        result=command.action==='clear' ? `Đã xoá “${label}” khỏi hồ sơ.` : `Đã lưu ${label.toLowerCase()}: ${command.value}`;
+      }
     } else if (command.kind === 'export') {
       result = await exportSummary(db,job.chat_id,now,command.format);
     } else if (command.kind === 'systemStatus') {

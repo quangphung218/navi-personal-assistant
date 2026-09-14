@@ -17,7 +17,7 @@ function currentWeekStart(now: number): string {
 // The interface is deliberately one read: callers receive a bounded, source-labelled brief.
 // Pending state stays in its owning tables; this module only composes it for conversation.
 export async function buildConversationContext(db: D1Database, chatId: string, now = Date.now(), replyToMessageId?: number): Promise<string> {
-  const [plan, tasks, draft, approval, rename, measurement, selection, messages, replied] = await Promise.all([
+  const [plan, tasks, draft, approval, rename, measurement, selection, messages, replied, profile] = await Promise.all([
     db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE chat_id=? AND week_start=? AND status='active'")
       .bind(chatId,currentWeekStart(now)).first<Plan>(),
     db.prepare(`SELECT t.id,t.title,g.title AS goal_title FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id
@@ -40,9 +40,11 @@ export async function buildConversationContext(db: D1Database, chatId: string, n
       UNION ALL
       SELECT text,direction FROM conversation_messages WHERE chat_id=? AND telegram_message_id=?
       LIMIT 1`).bind(chatId,replyToMessageId,chatId,replyToMessageId).first<Message>(),
+    db.prepare('SELECT long_term_direction,current_focus,work_window,quiet_hours,overload_policy FROM operating_profiles WHERE chat_id=?').bind(chatId).first<Record<string,string|null>>(),
   ]);
   const sections: string[] = [];
   if (plan) sections.push(`Kế hoạch tuần ${plan.week_start}: mục tiêu “${shorten(plan.goal,160)}”; cam kết “${shorten(plan.commitment,160)}”; thói quen “${shorten([plan.habit1,plan.habit2].filter(Boolean).join(' / '),180)}”.`);
+  if (profile) sections.push(`Hồ sơ đã xác nhận: ${Object.entries(profile).filter(([,value])=>value).map(([key,value])=>`${key}: “${shorten(value!,120)}”`).join('; ')}.`);
   if (tasks.results.length) sections.push(`Task mở gần đây: ${tasks.results.map(task => `${task.id} “${shorten(task.title,120)}”${task.goal_title ? ` (mục tiêu: ${shorten(task.goal_title,80)})` : ' (việc riêng)'}`).join('; ')}.`);
   const pending: string[] = [];
   if (draft) pending.push(`đang lập kế hoạch tuần ${draft.week_start}, bước ${draft.step}`);

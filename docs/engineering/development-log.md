@@ -499,3 +499,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; D1 pilot có `operating_profiles`, `profile_change_requests` và ledger `0026_operating_profile.sql`; Processor version `b42e4deb-0964-40c5-b22a-5f6b34b8c58c` đã deploy.
 - Giới hạn: dữ liệu hồ sơ hiện là thông tin hỗ trợ context, chưa tự chặn thông báo theo giờ yên lặng hoặc tự xếp lịch. Thay đổi hồ sơ qua lệnh rõ ràng được lưu trực tiếp; bảng request dành cho luồng xác nhận sẽ dùng khi có sửa bằng ngôn ngữ tự nhiên.
 - Bước tiếp theo: dùng `/profile` để xem dữ liệu, đặt một trọng tâm hiện tại và thêm một habit; sau đó xây policy dùng giờ yên lặng/sức chứa vào gợi ý tuần.
+
+## 2026-09-14 — Xác nhận thay đổi hồ sơ và sửa liên kết habit
+
+- Đã làm: `/profile set` và `/profile clear` tạo preview; chỉ callback xác nhận mới ghi hồ sơ, hủy giữ nguyên. `/habit add` lấy `habit_id` trong cùng batch SQL để item tuần luôn liên kết đúng habit canonical.
+- Đã kiểm chứng: typecheck và 66 tests pass; Processor version `72a2a6d2-be23-4886-9a4c-12dc43d38f31` đã deploy.
+- Bước tiếp theo: thử `/profile set focus ...`, chọn Xác nhận hoặc Hủy, rồi dùng `/profile` kiểm tra kết quả.

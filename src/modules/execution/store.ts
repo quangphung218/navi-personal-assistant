@@ -982,10 +982,9 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           const position=Math.max(0,...existing.filter(item=>item.kind==='habit').map(item=>item.position))+1;
           statements.push(db.prepare(`INSERT OR IGNORE INTO habit_definitions(chat_id,title,normalized_title,cadence,target_occurrences,minimum_value,minimum_unit,created_at) SELECT ?,?,?,?,?,?,?,? WHERE ${guard}`)
             .bind(job.chat_id,command.title,normalize(command.title),spec.cadence,spec.target,spec.minimumValue ?? null,spec.minimumUnit ?? null,now,...args()));
-          const habit=await db.prepare('SELECT id FROM habit_definitions WHERE chat_id=? AND normalized_title=?').bind(job.chat_id,normalize(command.title)).first<{id:number}>();
           statements.push(db.prepare(`INSERT INTO weekly_plan_items(week_start,kind,position,title,normalized_title,metric,target_count,habit_id,cadence,minimum_value,minimum_unit,created_at)
-            SELECT ?, 'habit', ?, ?, ?, 'count', ?, ?, ?, ?, ?, ? WHERE ${guard}`)
-            .bind(plan.week_start,position,command.title,normalize(command.title),spec.target,habit?.id ?? null,spec.cadence,spec.minimumValue ?? null,spec.minimumUnit ?? null,now,...args()));
+            SELECT ?, 'habit', ?, ?, ?, 'count', ?, (SELECT id FROM habit_definitions WHERE chat_id=? AND normalized_title=?), ?, ?, ?, ? WHERE ${guard}`)
+            .bind(plan.week_start,position,command.title,normalize(command.title),spec.target,job.chat_id,normalize(command.title),spec.cadence,spec.minimumValue ?? null,spec.minimumUnit ?? null,now,...args()));
           result=`Đã thêm thói quen: ${command.title}.`;
         }
       }
@@ -995,10 +994,11 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       if (command.action==='show') result=profile ? `Hồ sơ vận hành\n${Object.entries(labels).map(([field,label])=>`• ${label}: ${profile[field as keyof typeof labels] ?? 'chưa đặt'}`).join('\n')}\n\nSửa: /profile set focus ...` : 'Chưa có hồ sơ vận hành. Ví dụ: /profile set focus Hoàn thiện Navi trong tháng này';
       else {
         const label=labels[command.field!];
-        statements.push(db.prepare(`INSERT INTO operating_profiles(chat_id,${command.field},updated_at) SELECT ?,?,? WHERE ${guard}
-          ON CONFLICT(chat_id) DO UPDATE SET ${command.field}=excluded.${command.field},revision=operating_profiles.revision+1,updated_at=excluded.updated_at`)
-          .bind(job.chat_id,command.action==='clear'?null:command.value!,now,...args()));
-        result=command.action==='clear' ? `Đã xoá “${label}” khỏi hồ sơ.` : `Đã lưu ${label.toLowerCase()}: ${command.value}`;
+        statements.push(db.prepare(`UPDATE profile_change_requests SET status='rejected',decided_at=? WHERE chat_id=? AND status='pending' AND ${guard}`).bind(now,job.chat_id,...args()));
+        statements.push(db.prepare(`INSERT INTO profile_change_requests(chat_id,field,value,action,created_at) SELECT ?,?,?,?,? WHERE ${guard}`)
+          .bind(job.chat_id,command.field,command.action==='clear'?null:command.value!,command.action,now,...args()));
+        result=command.action==='clear' ? `Anh muốn xoá “${label}” khỏi hồ sơ. Anh bấm nút để xác nhận hoặc giữ nguyên.` : `Anh muốn đặt ${label.toLowerCase()}: “${command.value}”. Anh bấm nút để xác nhận hoặc giữ nguyên.`;
+        replyMarkup=confirmationButtons('profile:pending');
       }
     } else if (command.kind === 'export') {
       result = await exportSummary(db,job.chat_id,now,command.format);
@@ -1045,6 +1045,21 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         }
       }
     } else if (command.kind === 'confirm' || command.kind === 'reject') {
+      const profileTarget = command.target === 'profile:pending';
+      if (profileTarget) {
+        const change=await db.prepare("SELECT id,field,value,action FROM profile_change_requests WHERE chat_id=? AND status='pending' ORDER BY id DESC LIMIT 1").bind(job.chat_id).first<{id:number;field:'long_term_direction'|'current_focus'|'work_window'|'quiet_hours'|'overload_policy';value:string|null;action:'set'|'clear'}>();
+        if (!change) result='Thay đổi hồ sơ này không còn hiệu lực.';
+        else if (command.kind==='reject') {
+          statements.push(db.prepare(`UPDATE profile_change_requests SET status='rejected',decided_at=? WHERE id=? AND ${guard}`).bind(now,change.id,...args()));
+          result='Đã giữ nguyên hồ sơ.';
+        } else {
+          statements.push(db.prepare(`INSERT INTO operating_profiles(chat_id,${change.field},updated_at) SELECT ?,?,? WHERE ${guard}
+            ON CONFLICT(chat_id) DO UPDATE SET ${change.field}=excluded.${change.field},revision=operating_profiles.revision+1,updated_at=excluded.updated_at`)
+            .bind(job.chat_id,change.action==='clear'?null:change.value,now,...args()));
+          statements.push(db.prepare(`UPDATE profile_change_requests SET status='approved',decided_at=? WHERE id=? AND ${guard}`).bind(now,change.id,...args()));
+          result=change.action==='clear' ? 'Đã xoá mục này khỏi hồ sơ.' : 'Đã cập nhật hồ sơ vận hành.';
+        }
+      } else {
       const renameTarget = command.target?.match(/^goalrename:(\d+)$/u);
       if (renameTarget) {
         const change = await db.prepare(`SELECT id,goal_id,new_title,normalized_new_title FROM goal_rename_requests WHERE chat_id=? AND status='pending' ORDER BY created_at DESC LIMIT 1`)
@@ -1173,6 +1188,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
           statements.push(db.prepare(`UPDATE approval_requests SET status='approved',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now, approval.id, ...args()));
           result = `Đã xác nhận và thêm ${taskId}: ${approval.title}${goalTitle ? `\nGắn với mục tiêu: ${goalTitle}.` : ''}\nKhi xong, anh nhắn /done ${taskId}.`;
         }
+      }
       }
       }
       }

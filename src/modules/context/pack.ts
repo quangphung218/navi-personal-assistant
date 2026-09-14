@@ -7,12 +7,19 @@ function shorten(value: string, limit: number): string {
   return compact.length > limit ? `${compact.slice(0,limit - 1)}…` : compact;
 }
 
+function currentWeekStart(now: number): string {
+  const local = new Date(now + 7 * 60 * 60 * 1000);
+  const day = local.getUTCDay();
+  local.setUTCDate(local.getUTCDate() - (day === 0 ? 6 : day - 1));
+  return local.toISOString().slice(0,10);
+}
+
 // The interface is deliberately one read: callers receive a bounded, source-labelled brief.
 // Pending state stays in its owning tables; this module only composes it for conversation.
 export async function buildConversationContext(db: D1Database, chatId: string, now = Date.now(), replyToMessageId?: number): Promise<string> {
   const [plan, tasks, draft, approval, rename, measurement, selection, messages, replied] = await Promise.all([
-    db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE chat_id=? AND status='active' ORDER BY week_start DESC LIMIT 1")
-      .bind(chatId).first<Plan>(),
+    db.prepare("SELECT week_start,goal,commitment,habit1,habit2 FROM weekly_plans WHERE chat_id=? AND week_start=? AND status='active'")
+      .bind(chatId,currentWeekStart(now)).first<Plan>(),
     db.prepare(`SELECT t.id,t.title,g.title AS goal_title FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id
       WHERE t.status='open' ORDER BY t.created_at DESC,t.id DESC LIMIT 3`).all<Task>(),
     db.prepare("SELECT step,goal,commitment,habit1,habit2,week_start FROM weekly_drafts WHERE id=1 AND chat_id=?")

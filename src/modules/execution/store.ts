@@ -93,6 +93,18 @@ function metricFor(title: string): { metric: 'count'|'completion'; target?: numb
   return target ? { metric: 'count', target } : { metric: 'completion' };
 }
 
+async function taskIdFromRepliedMessage(db: D1Database, chatId: string, messageId: number): Promise<string|undefined> {
+  const messages = await db.prepare(`SELECT text FROM deliveries WHERE chat_id=? AND message_id=?
+    UNION ALL
+    SELECT text FROM conversation_messages WHERE chat_id=? AND telegram_message_id=?`)
+    .bind(chatId,messageId,chatId,messageId).all<{text:string}>();
+  const ids = new Set(messages.results.flatMap(message => [...message.text.matchAll(/\bT\d+\b/gu)].map(match => match[0]!)));
+  if (ids.size !== 1) return undefined;
+  const id = [...ids][0]!;
+  const task = await db.prepare("SELECT id FROM tasks WHERE id=? AND status='open'").bind(id).first<{id:string}>();
+  return task?.id;
+}
+
 function planItemValues(plan: Pick<WeeklyPlan,'goal'|'commitment'|'habit1'|'habit2'>) {
   return [
     { kind:'goal' as const, position:0, title:plan.goal },
@@ -528,7 +540,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     const args = () => [token, Date.now(), job.id];
     const statements: D1PreparedStatement[] = [];
     const command = parseCommand(job.text);
-    const recent = await buildConversationContext(db,job.chat_id,now,job.reply_to_message_id ?? undefined);
+    let recent: string|undefined;
     let result = '';
     let replyMarkup: ReplyMarkup | undefined;
     let route = 'local';
@@ -975,22 +987,31 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     } else if (command.kind === 'done') {
       let reference = command.reference;
       if (normalize(reference) === 'đó') {
-        const recentTask = await db.prepare("SELECT id FROM tasks WHERE status='open' ORDER BY created_at DESC,id DESC LIMIT 2").all<{id:string}>();
-        if (recentTask.results.length !== 1) { result = recentTask.results.length > 1 ? 'Có nhiều việc có thể là “việc đó”. Anh dùng mã T... để em chọn đúng nhé.' : 'Em chưa thấy task gần đây để đánh dấu hoàn thành.'; reference = ''; }
-        else reference = recentTask.results[0]!.id;
+        const repliedTask = job.reply_to_message_id === null ? undefined : await taskIdFromRepliedMessage(db,job.chat_id,job.reply_to_message_id);
+        if (repliedTask) reference = repliedTask;
+        else if (job.reply_to_message_id !== null) {
+          result = 'Tin anh đang trả lời chưa chỉ rõ một task đang mở. Anh dùng /done kèm mã T... để em ghi đúng việc.';
+          reference = '';
+        } else {
+          const recentTask = await db.prepare("SELECT id FROM tasks WHERE status='open' ORDER BY created_at DESC,id DESC LIMIT 2").all<{id:string}>();
+          if (recentTask.results.length !== 1) { result = recentTask.results.length > 1 ? 'Có nhiều việc có thể là “việc đó”. Anh dùng mã T... để em chọn đúng nhé.' : 'Em chưa thấy task gần đây để đánh dấu hoàn thành.'; reference = ''; }
+          else reference = recentTask.results[0]!.id;
+        }
       }
-      const key = reference.replace(/^#/, '').toUpperCase();
-      const matches = /^T\d+$/.test(key)
-        ? (await db.prepare('SELECT id,title,status,revision FROM tasks WHERE id=?').bind(key).all<Task>()).results
-        : (await db.prepare('SELECT id,title,status,revision FROM tasks WHERE normalized_title=? LIMIT 2').bind(normalize(command.reference)).all<Task>()).results;
-      if (matches.length !== 1) result = matches.length > 1 ? 'Có nhiều việc trùng tên. Anh dùng /list rồi /done kèm mã việc nhé.' : 'Em chưa xác định được việc này. Anh dùng /list rồi /done kèm mã việc nhé.';
-      else {
+      if (reference) {
+        const key = reference.replace(/^#/, '').toUpperCase();
+        const matches = /^T\d+$/.test(key)
+          ? (await db.prepare('SELECT id,title,status,revision FROM tasks WHERE id=?').bind(key).all<Task>()).results
+          : (await db.prepare('SELECT id,title,status,revision FROM tasks WHERE normalized_title=? LIMIT 2').bind(normalize(reference)).all<Task>()).results;
+        if (matches.length !== 1) result = matches.length > 1 ? 'Có nhiều việc trùng tên. Anh dùng /list rồi /done kèm mã việc nhé.' : 'Em chưa xác định được việc này. Anh dùng /list rồi /done kèm mã việc nhé.';
+        else {
         const task = matches[0]!;
         if (task.status === 'done') result = `${task.id} đã được ghi nhận hoàn thành trước đó.`;
         else {
           statements.push(db.prepare(`UPDATE tasks SET status='done',revision=revision+1,completed_at=?,completion_source='user_reported' WHERE id=? AND revision=? AND ${guard}`)
             .bind(now, task.id, task.revision, ...args()));
           result = `Đã ghi nhận ${task.id} hoàn thành theo xác nhận của anh: ${task.title}`;
+        }
         }
       }
     } else if (command.kind === 'confirm' || command.kind === 'reject') {
@@ -1138,6 +1159,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     else if (structuredAssistant && await reserveAi(db, now)) {
       route = 'ai_intent';
       aiStartedAt = Date.now();
+      recent = await buildConversationContext(db,job.chat_id,now,job.reply_to_message_id ?? undefined);
       const proposal = await structuredAssistant(job.text, recent);
       aiFinishedAt = Date.now();
       if (proposal.kind === 'add_task') {
@@ -1150,6 +1172,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
     else if (assistant && await reserveAi(db, now)) {
       route = 'ai';
       aiStartedAt = Date.now();
+      recent = await buildConversationContext(db,job.chat_id,now,job.reply_to_message_id ?? undefined);
       result = await assistant(job.text, recent);
       aiFinishedAt = Date.now();
     } else {

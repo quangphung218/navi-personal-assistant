@@ -31,6 +31,6 @@ export function interpretConversationalIntent(text: string): ConversationalInten
   if (/^(?:gắn|thêm)\s+(?:task|việc)\s+(?:này|đó)\s+(?:vào|cho)\s+(?:mục tiêu|goal)[.!]?$/iu.test(value)) return {kind:'attach_recent_task'};
   if (/^(?:bỏ|gỡ)\s+(?:task|việc)\s+(?:này|đó)\s+(?:khỏi|ra khỏi)\s+(?:mục tiêu|goal)[.!]?$/iu.test(value)) return {kind:'detach_recent_task'};
   if (/^(?:(?:task|việc)\s+(?:này|đó)\s+)?(?:để|sang)\s+tuần sau[.!]?$/iu.test(value)) return {kind:'carry_recent_task'};
-  if (/^(?:đánh dấu(?: là)?\s+)?(?:việc|task|cái)\s+(?:này|đó)\s+(?:đã )?(?:xong|hoàn thành)[.!]?$/iu.test(value)) return {kind:'complete_recent_task'};
+  if (/^(?:đánh dấu(?: là)?\s+)?(?:việc|task|cái)\s+(?:này|đó)\s+(?:đã )?(?:xong|hoàn thành)(?: rồi)?[.!]?$/iu.test(value)) return {kind:'complete_recent_task'};
   return undefined;
 }

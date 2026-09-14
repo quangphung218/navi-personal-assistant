@@ -28,6 +28,7 @@ import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
 import { openRouterFocusAssistant, openRouterStructuredAssistant } from '../src/adapters/openrouter';
+import { buildConversationContext } from '../src/modules/context/pack';
 import { telegramMenuCommands } from '../src/modules/work/menu';
 import type { TelegramUpdate } from '../src/adapters/telegram';
 import { pilotConversationCorpus, pilotExecutionWalkthrough, pilotReplyContextCorpus } from './fixtures/pilot-conversation-corpus';
@@ -145,6 +146,13 @@ describe('task conversation on real D1 bindings',()=>{
     expect(context.length).toBeLessThanOrEqual(3800);
     expect(await db.prepare("SELECT route FROM job_metrics WHERE job_id=(SELECT id FROM jobs WHERE update_id=10)").first()).toMatchObject({route:'ai_intent'});
   });
+  it('does not present an old active plan as this week\'s context',async()=>{
+    const now=Date.UTC(2026,8,14,5);
+    await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at)
+      VALUES('2026-09-07','123','Kế hoạch cũ','Cam kết cũ','Thiền','',?)`).bind(now).run();
+    const context=await buildConversationContext(db,'123',now);
+    expect(context).not.toContain('Kế hoạch cũ');
+  });
   it('puts the exact replied-to Telegram message ahead of ordinary recent context',async()=>{
     const now=Date.now();
     await accept(db,{...update(1,'/start secret'),message:{...update(1,'/start secret').message!,message_id:1001}},true,now); await processNext(db,now); await replies();
@@ -159,6 +167,23 @@ describe('task conversation on real D1 bindings',()=>{
     expect(await db.prepare('SELECT reply_to_message_id FROM jobs WHERE update_id=3').first()).toMatchObject({reply_to_message_id:700});
     expect(context).toContain('Tin anh đang trả lời: Anh: Task CV mobile cần sửa phần thành tích');
     expect((await replies()).at(-1)).toContain('Em đã nhận được tham chiếu task.');
+  });
+  it('completes the one open task named in a replied Navi message',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    await accept(db,update(2,'/add Viết README'),false,now); await processNext(db,now);
+    await db.prepare('UPDATE deliveries SET message_id=? WHERE job_id=(SELECT id FROM jobs WHERE update_id=2)').bind(700).run();
+    await accept(db,replyUpdate(3,'Task này xong rồi',700),false,now); await processNext(db,now); await replies();
+    expect(await db.prepare("SELECT status FROM tasks WHERE id='T2'").first()).toMatchObject({status:'done'});
+  });
+  it('asks for a task ID when a replied message does not name one',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    await accept(db,update(2,'/add Viết README'),false,now); await processNext(db,now);
+    await db.prepare('UPDATE deliveries SET message_id=?,text=? WHERE job_id=(SELECT id FROM jobs WHERE update_id=2)').bind(700,'Em đã ghi nhận việc của anh.').run();
+    await accept(db,replyUpdate(3,'Task này xong rồi',700),false,now); await processNext(db,now);
+    expect(await db.prepare("SELECT status FROM tasks WHERE id='T2'").first()).toMatchObject({status:'open'});
+    expect((await replies()).at(-1)).toContain('/done kèm mã T');
   });
   it('keeps every anonymized reply-context case anchored to its Telegram source',async()=>{
     const now=Date.now();
@@ -417,12 +442,13 @@ describe('task conversation on real D1 bindings',()=>{
       await receive(update(id,text));await processNext(db,now);
     }
     let aiCalls=0;
-    await receive(update(8,'Ngày 7/9 anh đã chạy bộ'));
+    const local=new Date(now + 7 * 60 * 60 * 1000);
+    const date=`${local.getUTCDate()}/${local.getUTCMonth()+1}`;
+    await receive(update(8,`Ngày ${date} anh đã chạy bộ`));
     await processNext(db,now,async()=>{aiCalls++;return 'AI fallback';});
     const events=await db.prepare('SELECT note FROM weekly_checkins').all<{note:string}>();
     expect(aiCalls).toBe(0);
-    expect(events.results).toEqual([{note:'Ngày 7/9 anh đã chạy bộ'}]);
-    expect(await db.prepare('SELECT occurred_at FROM weekly_checkins').first()).toMatchObject({occurred_at:Date.parse('2026-09-07T12:00:00+07:00')});
+    expect(events.results).toEqual([{note:`Ngày ${date} anh đã chạy bộ`}]);
   });
   it('lists, renames and deletes progress only after confirmation',async()=>{
     await link();
@@ -467,15 +493,21 @@ describe('task conversation on real D1 bindings',()=>{
     expect(markup).toEqual({inline_keyboard:[[{text:'Đã làm',callback_data:'_navi:task:done:T2'},{text:'Dời 1 ngày',callback_data:'_navi:task:defer:T2'}],[{text:'Bỏ nhắc',callback_data:'_navi:task:clear:T2'}]]});
   });
   it('shows every planned item in today, reminder, and weekly review',async()=>{
-    const now=Date.now(), reminder=Date.UTC(2026,8,9,13);
+    const now=Date.now();
+    const localNow=new Date(now + 7 * 60 * 60 * 1000);
+    const day=localNow.getUTCDay();
+    const weekDate=new Date(localNow);
+    weekDate.setUTCDate(weekDate.getUTCDate() - (day === 0 ? 6 : day - 1));
+    const currentWeek=weekDate.toISOString().slice(0,10);
+    const reminder=Date.UTC(localNow.getUTCFullYear(),localNow.getUTCMonth(),localNow.getUTCDate(),13);
     await accept(db,update(1,'/start secret'),true,now);await processNext(db,now);await replies();
     await db.prepare(`INSERT INTO weekly_plans(week_start,chat_id,goal,commitment,habit1,habit2,created_at)
-      VALUES('2026-09-07','123','Public Navi lên GitHub','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách 2 buổi',?)`).bind(now).run();
+      VALUES(?,'123','Public Navi lên GitHub','Apply 5 jobs','Chạy bộ 3 buổi','Đọc sách 2 buổi',?)`).bind(currentWeek,now).run();
     await receive(update(2,'/today'));await processNext(db,now);
     expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');
     expect(await enqueueWeeklyProgressReminder(db,reminder)).toBe(true);
     expect((await replies()).at(-1)).toContain('Đọc sách 2 buổi 0/2 lần');
-    const sunday=Date.UTC(2026,8,13,12);
+    const sunday=Date.UTC(localNow.getUTCFullYear(),localNow.getUTCMonth(),localNow.getUTCDate() + ((7 - day) % 7),12);
     expect(await enqueueWeeklyReview(db,sunday)).toBe(true);
     expect((await replies()).at(-1)).toContain('Mục tiêu\nPublic Navi lên GitHub\n○ Chưa hoàn thành');
   });

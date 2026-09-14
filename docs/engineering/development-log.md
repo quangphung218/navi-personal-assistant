@@ -471,3 +471,24 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 63 tests, typecheck và hai Worker build dry-run.
 - Chưa làm / giới hạn: corpus hiện là seed giả lập, chưa thay thế đánh giá trên dữ liệu pilot thật; mỗi case thực cần được khử định danh trước khi thêm.
 - Bước tiếp theo: khi gặp một câu Navi hiểu sai, thêm case tối thiểu vào corpus và chọn parser local hoặc context/model test phù hợp.
+
+## 2026-09-14 — Làm chặt ngữ cảnh tuần và hoàn thành task khi reply
+
+- Bối cảnh: context pack có thể đưa kế hoạch active của tuần cũ vào AI; mọi lệnh local cũng dựng context dù không gọi model. Khi anh reply một tin Navi, cụm “task này xong rồi” chưa dùng mã task trong chính tin được reply.
+- Đã làm:
+  - `src/modules/context/pack.ts`: chỉ đưa kế hoạch active của đúng tuần địa phương hiện tại vào brief.
+  - `src/modules/execution/store.ts`: chỉ dựng context ngay trước hai nhánh gọi AI. Với yêu cầu hoàn thành task theo tham chiếu, Navi ưu tiên một mã `T...` duy nhất trong tin Telegram được reply; nếu không xác định được, bot yêu cầu mã thay vì suy đoán task gần nhất.
+  - `src/modules/work/intent.ts`: nhận dạng thêm cách nói tự nhiên “task này xong rồi”.
+  - `tests/tasks.test.ts`: thêm regression cho kế hoạch cũ, reply có/không có task ID và làm test lịch không phụ thuộc ngày máy chạy.
+- Quyết định: chỉ dùng mã task xuất hiện duy nhất trong tin được reply cho mutation local. Nội dung reply vẫn được dùng làm context AI, nhưng không tự cấp quyền sửa dữ liệu khi không có định danh rõ.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests, typecheck và hai Worker build dry-run.
+- Chưa làm / giới hạn: reply vào tin không có mã task sẽ cần anh dùng `/done T...`; chưa có bộ resolver chung cho mọi loại tham chiếu như đổi tên, gắn mục tiêu hoặc check-in.
+- Chi phí / dữ liệu / rủi ro: không thêm migration, dịch vụ hoặc AI call; giảm các lần đọc D1 cho lệnh local.
+- Bước tiếp theo: quan sát các reply thực tế, thêm case đã khử định danh vào corpus, rồi mở rộng resolver thống nhất nếu đủ mẫu lỗi.
+
+## 2026-09-14 — Kích hoạt xử lý reply task trên pilot
+
+- Đã làm: đã deploy Processor dùng context tuần hiện tại và resolver task từ Telegram reply.
+- Đã kiểm chứng: Worker `personal-assistant-processor` version `4b5af16b-e70c-47e0-9d21-3a1f04a2dd97` đang gắn Queue consumer, producer và Cron 5 phút; trước deploy, `npm exec --yes --package=node@24 -- npm run check` pass 66 tests.
+- Giới hạn vận hành: không có migration hay thay đổi Ingress. Chỉ reply một tin có đúng một mã task mở mới hoàn thành trực tiếp; các reply còn mơ hồ cần mã `/done T...`.
+- Bước tiếp theo: thử reply vào tin Navi có dòng `T...` và nhắn “task này xong rồi”; sau đó kiểm tra `/list`.

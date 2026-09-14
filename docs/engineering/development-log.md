@@ -505,3 +505,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: `/profile set` và `/profile clear` tạo preview; chỉ callback xác nhận mới ghi hồ sơ, hủy giữ nguyên. `/habit add` lấy `habit_id` trong cùng batch SQL để item tuần luôn liên kết đúng habit canonical.
 - Đã kiểm chứng: typecheck và 66 tests pass; Processor version `72a2a6d2-be23-4886-9a4c-12dc43d38f31` đã deploy.
 - Bước tiếp theo: thử `/profile set focus ...`, chọn Xác nhận hoặc Hủy, rồi dùng `/profile` kiểm tra kết quả.
+
+## 2026-09-14 — Áp dụng hồ sơ vào tin chủ động và kế hoạch tuần
+
+- Đã làm: giờ yên lặng dạng `HH:MM-HH:MM` chặn daily briefing, nhắc tiến độ và nhắc task; `/today`, `/focus` và khởi tạo `/week` hiển thị trọng tâm, khung giờ và policy quá tải đã xác nhận.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; Processor version `fb352055-ac15-4fc4-82a9-852f2038a7eb` đã deploy.
+- Giới hạn: Navi mới đọc khung giờ và policy để đặt ngữ cảnh/gợi ý, chưa có ước lượng thời lượng task hay tự tính sức chứa tuần.
+- Bước tiếp theo: thêm thời lượng task và tổng ngân sách tuần để báo quá tải có số liệu.

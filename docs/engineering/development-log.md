@@ -519,3 +519,9 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; migration ledger `0027_weekly_capacity.sql` tồn tại trên D1 pilot; Processor `589d59c0-cdc2-44b1-8ab3-58c5348945bd` đã deploy.
 - Giới hạn: chỉ task có ước tính mới được tính; thời lượng habit/cam kết chưa được cộng vào ngân sách.
 - Bước tiếp theo: thêm thời lượng cho habit và cam kết, rồi hiển thị tổng tải đầy đủ trong review tuần.
+
+## 2026-09-15 — Tổng tải gồm task, habit và cam kết
+
+- Đã làm: `/capacity` không kèm số giờ hiển thị tổng phút task, habit và cam kết. Habit được tính `số lần × phút tối thiểu`; cam kết có ghi `giờ` hoặc `phút` trong tên được cộng vào tổng.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; Processor `d66860f8-1288-4cab-b383-de858d73e56c` đã deploy.
+- Giới hạn: habit/cam kết không có thời lượng vẫn hiện là 0 phút, không suy đoán.

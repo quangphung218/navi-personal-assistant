@@ -106,6 +106,23 @@ function metricFor(title: string): { metric: 'count'|'completion'; target?: numb
   return target ? { metric: 'count', target } : { metric: 'completion' };
 }
 
+function minutesIn(text:string): number {
+  const hours=text.match(/\b(\d{1,2})\s*(?:giờ|h)\b/iu)?.[1];
+  const minutes=text.match(/\b(\d{1,3})\s*(?:phút|min)\b/iu)?.[1];
+  return (hours ? Number(hours)*60 : 0) + (minutes ? Number(minutes) : 0);
+}
+
+async function capacitySummary(db:D1Database,chatId:string,week:string):Promise<{budget:number|null;tasks:number;habits:number;commitment:number}> {
+  const [capacity,tasks,items]=await Promise.all([
+    db.prepare('SELECT minutes FROM weekly_capacities WHERE chat_id=? AND week_start=?').bind(chatId,week).first<{minutes:number}>(),
+    db.prepare("SELECT COALESCE(SUM(estimated_minutes),0) AS minutes FROM tasks WHERE status='open'").first<{minutes:number}>(),
+    db.prepare("SELECT kind,title,target_count,minimum_value FROM weekly_plan_items WHERE week_start=? AND kind IN ('habit','commitment')").bind(week).all<{kind:'habit'|'commitment';title:string;target_count:number|null;minimum_value:number|null}>(),
+  ]);
+  const habits=items.results.filter(i=>i.kind==='habit').reduce((sum,i)=>sum+(i.minimum_value ?? 0)*(i.target_count ?? 0),0);
+  const commitment=items.results.filter(i=>i.kind==='commitment').reduce((sum,i)=>sum+minutesIn(i.title),0);
+  return {budget:capacity?.minutes ?? null,tasks:tasks?.minutes ?? 0,habits,commitment};
+}
+
 async function taskIdFromRepliedMessage(db: D1Database, chatId: string, messageId: number): Promise<string|undefined> {
   const messages = await db.prepare(`SELECT text FROM deliveries WHERE chat_id=? AND message_id=?
     UNION ALL
@@ -1017,9 +1034,14 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       else { statements.push(db.prepare(`UPDATE tasks SET estimated_minutes=? WHERE id=? AND status='open' AND ${guard}`).bind(command.minutes,task.id,...args())); result=`Đã ước tính ${task.id}: ${command.minutes} phút.`; }
     } else if (command.kind === 'capacity') {
       const week=weekStart(now);
-      statements.push(db.prepare(`INSERT INTO weekly_capacities(chat_id,week_start,minutes,updated_at) SELECT ?,?,?,? WHERE ${guard}
-        ON CONFLICT(chat_id,week_start) DO UPDATE SET minutes=excluded.minutes,updated_at=excluded.updated_at`).bind(job.chat_id,week,command.minutes,now,...args()));
-      result=`Đã đặt ngân sách tuần này: ${command.minutes} phút.`;
+      if (command.minutes === undefined) {
+        const load=await capacitySummary(db,job.chat_id,week), total=load.tasks+load.habits+load.commitment;
+        result=`Tải tuần ${week}\n• Task: ${load.tasks} phút\n• Thói quen: ${load.habits} phút\n• Cam kết: ${load.commitment} phút\n• Tổng: ${total} phút${load.budget === null ? '\n\nChưa đặt ngân sách. Dùng /capacity 6h' : `/${load.budget} phút${total>load.budget ? '\nĐang vượt ngân sách; em đề xuất giảm scope hoặc dời task.' : ''}`}`;
+      } else {
+        statements.push(db.prepare(`INSERT INTO weekly_capacities(chat_id,week_start,minutes,updated_at) SELECT ?,?,?,? WHERE ${guard}
+          ON CONFLICT(chat_id,week_start) DO UPDATE SET minutes=excluded.minutes,updated_at=excluded.updated_at`).bind(job.chat_id,week,command.minutes,now,...args()));
+        result=`Đã đặt ngân sách tuần này: ${command.minutes} phút.`;
+      }
     } else if (command.kind === 'profile') {
       const labels={long_term_direction:'Hướng dài hạn',current_focus:'Trọng tâm hiện tại',work_window:'Khung giờ phù hợp',quiet_hours:'Giờ yên lặng',overload_policy:'Khi quá tải'} as const;
       const profile=await db.prepare('SELECT long_term_direction,current_focus,work_window,quiet_hours,overload_policy FROM operating_profiles WHERE chat_id=?').bind(job.chat_id).first<Record<keyof typeof labels,string|null>>();

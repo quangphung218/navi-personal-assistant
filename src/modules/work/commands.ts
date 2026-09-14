@@ -18,7 +18,7 @@ export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { ki
   | { kind: 'focusFeedback'; focusJobId: number; verdict: 'helpful'|'not_helpful' } | { kind: 'status' }
   | { kind: 'profile'; action:'show'|'set'|'clear'; field?:'long_term_direction'|'current_focus'|'work_window'|'quiet_hours'|'overload_policy'; value?:string }
   | { kind: 'habit'; title?:string }
-  | { kind: 'estimate'; reference:string; minutes:number } | { kind:'capacity'; minutes:number }
+  | { kind: 'estimate'; reference:string; minutes:number } | { kind:'capacity'; minutes?:number }
   | { kind: 'thanks' } | { kind: 'help' } | { kind: 'unknown' };
 
 export const normalize = (text: string) => text.normalize('NFC').trim().replace(/\s+/g, ' ').toLocaleLowerCase('vi');
@@ -72,6 +72,7 @@ export function parseCommand(text: string): Command {
   if(estimate&&Number(estimate[2])>0&&Number(estimate[2])<=1440)return {kind:'estimate',reference:estimate[1]!.toUpperCase(),minutes:Number(estimate[2])};
   const capacity=value.match(/^\/capacity(?:@\w+)?\s+(\d{1,2})\s*(h|giờ|phút|min)?$/iu);
   if(capacity){const raw=Number(capacity[1]),minutes=/^(?:h|giờ)$/iu.test(capacity[2]??'')?raw*60:raw; if(minutes>=30&&minutes<=10080)return {kind:'capacity',minutes};}
+  if(/^\/capacity(?:@\w+)?$/iu.test(value)) return {kind:'capacity'};
   if (/^\/profile(?:@\w+)?$/iu.test(value)) return {kind:'profile',action:'show'};
   const profile = value.match(/^\/profile(?:@\w+)?\s+(set|clear)\s+(direction|focus|work|quiet|overload)(?:\s+([\s\S]+))?$/iu);
   if (profile) {

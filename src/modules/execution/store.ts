@@ -51,6 +51,19 @@ function localDay(now: number): number {
   return new Date(now + 7 * 60 * 60 * 1000).getUTCDay();
 }
 
+function isQuietHours(value: string|null|undefined, now: number): boolean {
+  const match=value?.match(/^\s*(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})\s*$/u);
+  if (!match) return false;
+  const start=Number(match[1])*60+Number(match[2]), end=Number(match[3])*60+Number(match[4]), current=localHour(now)*60+new Date(now+7*60*60*1000).getUTCMinutes();
+  if (start===end || start>1439 || end>1439) return false;
+  return start<end ? current>=start&&current<end : current>=start||current<end;
+}
+
+async function quietNow(db:D1Database,chatId:string,now:number):Promise<boolean> {
+  const profile=await db.prepare('SELECT quiet_hours FROM operating_profiles WHERE chat_id=?').bind(chatId).first<{quiet_hours:string|null}>();
+  return isQuietHours(profile?.quiet_hours,now);
+}
+
 function scheduledTime(command: { day: number; month: number; year?: number; hour: number; minute: number }, now: number): number | undefined {
   const year = command.year ?? new Date(now + 7 * 60 * 60 * 1000).getUTCFullYear();
   const value = new Date(Date.UTC(year, command.month - 1, command.day, command.hour - 7, command.minute));
@@ -417,8 +430,11 @@ async function weeklyReviewSummary(db: D1Database, plan: WeeklyPlan, now: number
 
 async function todaySummary(db: D1Database, chatId: string, now: number): Promise<string> {
   const date = localDate(now), start = Date.parse(`${date}T00:00:00+07:00`), end = start + 24 * 60 * 60 * 1000;
-  const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
-    .bind(weekStart(now), chatId).first<WeeklyPlan>();
+  const [plan,profile] = await Promise.all([
+    db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'")
+    .bind(weekStart(now), chatId).first<WeeklyPlan>(),
+    db.prepare('SELECT current_focus FROM operating_profiles WHERE chat_id=?').bind(chatId).first<{current_focus:string|null}>(),
+  ]);
   const due = (await db.prepare("SELECT t.id,t.title,t.status,t.revision,t.due_at,t.goal_id,g.title AS goal_title FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id WHERE t.status='open' AND t.due_at>=? AND t.due_at<? ORDER BY t.due_at,t.id LIMIT 6")
     .bind(start,end).all<Task>()).results;
   const unscheduled = due.length < 6 ? (await db.prepare("SELECT t.id,t.title,t.status,t.revision,t.due_at,t.goal_id,g.title AS goal_title FROM tasks t LEFT JOIN goals g ON g.id=t.goal_id WHERE t.status='open' AND t.due_at IS NULL ORDER BY t.created_at,t.id LIMIT ?")
@@ -426,13 +442,14 @@ async function todaySummary(db: D1Database, chatId: string, now: number): Promis
   const carryovers = (await db.prepare(`SELECT task_id FROM weekly_task_carryovers WHERE week_start=?`).bind(weekStart(now)).all<{task_id:string}>()).results;
   const carried = new Set(carryovers.map(item=>item.task_id));
   const taskLines = [...due,...unscheduled].map(task => `• ${task.id}: ${task.title}${carried.has(task.id) ? ' — giữ từ tuần trước' : task.due_at ? ` — ${formatLocalTime(task.due_at)}` : ''}${task.goal_title ? ` — mục tiêu: ${task.goal_title}` : ' — việc riêng'}`);
-  if (!plan) return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}\n\nAnh nhắn /week để lập kế hoạch tuần.`;
+  const focus=profile?.current_focus ? `\nTrọng tâm hiện tại: ${profile.current_focus}\n` : '';
+  if (!plan) return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}${focus}\n${taskLines.length ? `Việc cần làm:\n${taskLines.join('\n')}` : 'Chưa có task đang mở.'}\n\nAnh nhắn /week để lập kế hoạch tuần.`;
   const items = await ensurePlanItems(db, plan, now), streaks = await habitStreaks(db, plan.week_start, now);
   const daily = (await db.prepare(`SELECT c.plan_item_id,MAX(COALESCE(c.met_threshold,1)) AS met FROM weekly_checkins c
     JOIN weekly_plan_items i ON i.id=c.plan_item_id WHERE i.week_start=? AND i.kind='habit' AND c.local_date=? GROUP BY c.plan_item_id`)
     .bind(plan.week_start,date).all<{plan_item_id:number;met:number}>()).results;
   const today = new Map(daily.map(row=>[row.plan_item_id,row.met ? 'đã đạt' : 'đã ghi nhận, chưa đủ ngưỡng']));
-  return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}${formatPlanItems(items,true,streaks,today)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.map(line=>line.length>240 ? line.slice(0,239)+'…' : line).join('\n')}` : 'Chưa có task đang mở.'}`;
+  return `Hôm nay ${date.slice(8,10)}/${date.slice(5,7)}${focus}${formatPlanItems(items,true,streaks,today)}\n\n${taskLines.length ? `Việc cần làm:\n${taskLines.map(line=>line.length>240 ? line.slice(0,239)+'…' : line).join('\n')}` : 'Chưa có task đang mở.'}`;
 }
 
 async function systemStatusSummary(db: D1Database, chatId: string, now: number): Promise<string> {
@@ -471,13 +488,14 @@ async function insightsSummary(db: D1Database, chatId: string, now: number): Pro
 }
 
 async function focusBrief(db: D1Database, plan: WeeklyPlan, now: number): Promise<string> {
-  const [items, open, checkins] = await Promise.all([
+  const [items, open, checkins, profile] = await Promise.all([
     ensurePlanItems(db, plan, now),
     tasks(db),
     db.prepare(`SELECT i.kind,i.title,c.quantity,c.local_date,c.actual_value,c.met_threshold
       FROM weekly_checkins c JOIN weekly_plan_items i ON i.id=c.plan_item_id
       WHERE c.week_start=? ORDER BY c.occurred_at DESC,c.id DESC LIMIT 6`).bind(plan.week_start)
       .all<{kind:PlanItem['kind'];title:string;quantity:number;local_date:string|null;actual_value:number|null;met_threshold:number|null}>(),
+    db.prepare('SELECT current_focus,overload_policy FROM operating_profiles WHERE chat_id=?').bind(plan.chat_id).first<{current_focus:string|null;overload_policy:string|null}>(),
   ]);
   const planLines = items.map(item => {
     const progress = item.metric === 'completion' ? (item.status === 'completed' ? 'đã hoàn thành' : 'chưa hoàn thành') : `${item.completed}/${item.target_count}`;
@@ -487,7 +505,7 @@ async function focusBrief(db: D1Database, plan: WeeklyPlan, now: number): Promis
   const checkinLines = checkins.results.length
     ? checkins.results.map(checkin => `- ${checkin.kind}: ${checkin.title} — ${checkin.quantity}${checkin.local_date ? `, ngày ${checkin.local_date}` : ''}${checkin.actual_value !== null ? `, ${checkin.actual_value} phút` : ''}${checkin.met_threshold === 0 ? ', chưa đạt ngưỡng' : ''}`)
     : ['- chưa có check-in'];
-  return `Tuần ${plan.week_start}\nMục tiêu: ${plan.goal}\nCam kết: ${plan.commitment}\n\nTiến độ kế hoạch:\n${planLines.join('\n')}\n\nTask mở:\n${taskLines.join('\n')}\n\nCheck-in gần nhất:\n${checkinLines.join('\n')}`;
+  return `Tuần ${plan.week_start}\nMục tiêu: ${plan.goal}\nCam kết: ${plan.commitment}${profile?.current_focus ? `\nTrọng tâm hiện tại: ${profile.current_focus}` : ''}${profile?.overload_policy ? `\nKhi quá tải: ${profile.overload_policy}` : ''}\n\nTiến độ kế hoạch:\n${planLines.join('\n')}\n\nTask mở:\n${taskLines.join('\n')}\n\nCheck-in gần nhất:\n${checkinLines.join('\n')}`;
 }
 
 async function exportSummary(db: D1Database, chatId: string, now: number, format: 'markdown'|'json'): Promise<string> {
@@ -589,6 +607,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       const existing = await db.prepare("SELECT week_start FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(date,job.chat_id).first<{week_start:string}>();
       if (existing) result = `Tuần bắt đầu ${date} đã có kế hoạch. Anh dùng /week status để xem tiến độ hoặc /review để tổng kết.`;
       else {
+        const profile=await db.prepare('SELECT work_window,overload_policy,current_focus FROM operating_profiles WHERE chat_id=?').bind(job.chat_id).first<{work_window:string|null;overload_policy:string|null;current_focus:string|null}>();
         const carryovers = (await db.prepare(`SELECT t.id,t.title FROM weekly_task_carryovers c JOIN tasks t ON t.id=c.task_id
           WHERE c.week_start=? AND t.status='open' ORDER BY t.created_at,t.id`).bind(date).all<{id:string;title:string}>()).results;
         const previous = command.continueGoal ? await db.prepare("SELECT goal FROM weekly_plans WHERE chat_id=? AND status='active' AND week_start<? ORDER BY week_start DESC LIMIT 1")
@@ -597,7 +616,7 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
         else {
           statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_drafts(id,chat_id,step,goal,week_start,created_at) SELECT 1,?,?,?,?,? WHERE ${guard}`)
             .bind(job.chat_id,previous ? 'commitment' : 'goal',previous?.goal ?? null,date,now,...args()));
-          result = `Mình lập kế hoạch tuần bắt đầu ${date} nhé.${previous ? `\n\nTiếp tục mục tiêu: ${previous.goal}.` : ''}${carryovers.length ? `\n\nTask giữ từ tuần trước:\n${carryovers.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\n${previous ? 'Cam kết cá nhân tuần này của anh là gì?' : 'Mục tiêu công việc quan trọng nhất của anh là gì?'}`;
+          result = `Mình lập kế hoạch tuần bắt đầu ${date} nhé.${profile?.current_focus ? `\n\nTrọng tâm hiện tại: ${profile.current_focus}.` : ''}${profile?.work_window ? `\nKhung giờ anh đã đặt: ${profile.work_window}.` : ''}${profile?.overload_policy ? `\nNếu quá tải, em sẽ đề xuất: ${profile.overload_policy}.` : ''}${previous ? `\n\nTiếp tục mục tiêu: ${previous.goal}.` : ''}${carryovers.length ? `\n\nTask giữ từ tuần trước:\n${carryovers.map(task=>`• ${task.id}: ${task.title}`).join('\n')}` : ''}\n\n${previous ? 'Cam kết cá nhân tuần này của anh là gì?' : 'Mục tiêu công việc quan trọng nhất của anh là gì?'}`;
         }
       }
     } else if (command.kind === 'goal') {
@@ -1277,7 +1296,7 @@ export async function enqueueWeeklyProgressReminder(db: D1Database, now = Date.n
   if (!plan) return false;
   const preference = await db.prepare('SELECT weekly_progress_enabled,delivery_hour FROM reminder_preferences WHERE chat_id=?').bind(plan.chat_id).first<ReminderPreference>();
   const hour = preference?.delivery_hour ?? 20;
-  if ((preference?.weekly_progress_enabled ?? 1) !== 1 || localHour(now) !== hour) return false;
+  if ((preference?.weekly_progress_enabled ?? 1) !== 1 || localHour(now) !== hour || await quietNow(db,plan.chat_id,now)) return false;
   const items = await ensurePlanItems(db, plan, now);
   const pending = items.filter(item => item.metric === 'completion' ? item.status !== 'completed' : item.completed < (item.target_count ?? 0))
     .map(item => `${item.title} ${item.metric === 'completion' ? '— chưa hoàn thành' : `${item.completed}/${item.target_count}${item.kind === 'habit' ? item.cadence === 'weekly' ? ' lần' : ' ngày' : ''}`}`);
@@ -1299,6 +1318,7 @@ export async function enqueueWeeklyProgressReminder(db: D1Database, now = Date.n
 export async function enqueueDailyBriefing(db: D1Database, now = Date.now()): Promise<boolean> {
   if (localHour(now) !== 8) return false;
   const owner = await ownerFor(db); if (!owner) return false;
+  if (await quietNow(db,owner.chat_id,now)) return false;
   const date = localDate(now), updateId = -(3_000_000_000 + Number(date.replaceAll('-','')));
   const text = await todaySummary(db, owner.chat_id, now);
   const results = await db.batch([
@@ -1313,6 +1333,7 @@ export async function enqueueDailyBriefing(db: D1Database, now = Date.now()): Pr
 }
 
 export async function enqueueDueTaskReminders(db: D1Database, now = Date.now()): Promise<boolean> {
+  const owner=await ownerFor(db); if (!owner || await quietNow(db,owner.chat_id,now)) return false;
   const due = (await db.prepare(`SELECT id,title,status,revision,due_at FROM tasks
     WHERE status='open' AND due_at<=? AND due_at>? ORDER BY due_at,id LIMIT 5`).bind(now, now-5*60_000).all<Task>()).results;
   let queued = false;

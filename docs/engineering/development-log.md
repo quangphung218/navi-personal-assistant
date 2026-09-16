@@ -525,3 +525,10 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã làm: `/capacity` không kèm số giờ hiển thị tổng phút task, habit và cam kết. Habit được tính `số lần × phút tối thiểu`; cam kết có ghi `giờ` hoặc `phút` trong tên được cộng vào tổng.
 - Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 66 tests; Processor `d66860f8-1288-4cab-b383-de858d73e56c` đã deploy.
 - Giới hạn: habit/cam kết không có thời lượng vẫn hiện là 0 phút, không suy đoán.
+
+## 2026-09-16 — Review tuần dựa trên ngân sách
+
+- Đã làm: `/review` hiển thị tải task, habit, cam kết và tổng so với ngân sách. Nếu vượt, bot đề nghị chọn task sang tuần; task chỉ thay đổi qua nút xác nhận sẵn có.
+- Đã kiểm chứng: test regression tạo task 60 phút với ngân sách 30 phút, xác nhận review báo vượt nhưng task vẫn mở; `npm test` pass 67 tests. Processor `8e0dd7a9-b77e-4893-a6e9-19d218172439` đã deploy.
+- Giới hạn: review chưa ghi lý do dời task thành dữ liệu có cấu trúc.
+- Bước tiếp theo: thêm lý do giữ/dời task vào review trước khi làm review tháng.

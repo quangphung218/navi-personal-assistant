@@ -706,6 +706,17 @@ describe('task conversation on real D1 bindings',()=>{
     await accept(db,update(10,'_navi:review:carry:T8'),false,now); await processNext(db,now); await replies();
     expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toMatchObject({task_id:'T8'});
   });
+  it('shows weekly capacity in review and keeps deferral behind an explicit button',async()=>{
+    const now=Date.now();
+    await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
+    for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi 30 phút'],[6,'Đọc sách'],[7,'đúng'],[8,'/add Viết README'],[9,'/estimate T8 60'],[10,'/capacity 30'],[11,'/review']] as const) {
+      await accept(db,update(id,text),false,now); await processNext(db,now); await replies();
+    }
+    const review=(await db.prepare('SELECT text FROM deliveries WHERE job_id=(SELECT id FROM jobs WHERE update_id=11)').first<{text:string}>())?.text ?? '';
+    expect(review).toContain('Tải: task 60 phút');
+    expect(review).toContain('vượt ngân sách');
+    expect(await db.prepare("SELECT status FROM tasks WHERE id='T8'").first()).toMatchObject({status:'open'});
+  });
   it('understands a contextual task and goal reference when one task is unambiguous',async()=>{
     const now=Date.now();
     await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();

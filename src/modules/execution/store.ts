@@ -433,14 +433,14 @@ function reviewTaskButtons(open: Task[]): ReplyMarkup | undefined {
 }
 
 async function weeklyReviewSummary(db: D1Database, plan: WeeklyPlan, now: number): Promise<{text:string; replyMarkup?:ReplyMarkup}> {
-  const [open,items] = await Promise.all([tasks(db),ensurePlanItems(db,plan,now)]);
+  const [open,items,load] = await Promise.all([tasks(db),ensurePlanItems(db,plan,now),capacitySummary(db,plan.chat_id,plan.week_start)]);
   const counts = progressCounts(items);
   const taskLines = open.length
     ? open.slice(0,5).map(task=>`• ${task.id}: ${task.title}${task.goal_title ? ` — hỗ trợ: ${task.goal_title}` : ' — việc riêng'}`).join('\n')
     : 'Không còn task mở.';
   const remainder = open.length > 5 ? `\nCòn ${open.length-5} task khác; dùng /list để xem toàn bộ.` : '';
   return {
-    text: `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\nReview tuần\nTask còn mở:\n${taskLines}${remainder}\n\nAnh có thể đánh dấu xong hoặc chọn task cần giữ sang tuần.`,
+    text: `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\nReview tuần\nTải: task ${load.tasks} phút · habit ${load.habits} phút · cam kết ${load.commitment} phút${load.budget === null ? '\nChưa đặt ngân sách giờ.' : ` · tổng ${load.tasks+load.habits+load.commitment}/${load.budget} phút${load.tasks+load.habits+load.commitment>load.budget ? ' — vượt ngân sách, hãy chọn một task sang tuần.' : ''}`}\n\nTask còn mở:\n${taskLines}${remainder}\n\nAnh có thể đánh dấu xong hoặc chọn task cần giữ sang tuần.`,
     replyMarkup: reviewTaskButtons(open),
   };
 }

@@ -1,7 +1,7 @@
 export type Command = { kind: 'add'; title: string; goalScoped: boolean } | { kind: 'done'; reference: string }
   | { kind: 'list'; includeDone: boolean } | { kind: 'confirm'; target?: string } | { kind: 'reject'; target?: string }
   | { kind: 'week'; continueGoal: boolean } | { kind: 'weekStatus' } | { kind: 'progressList'; page: number }
-  | { kind: 'today' } | { kind: 'review'; carry?: string }
+  | { kind: 'today' } | { kind: 'review'; action?: 'carry'|'keep'|'reason'|'confirm'|'cancel'; taskId?: string; reason?: string }
   | { kind: 'schedule'; reference: string; day: number; month: number; year?: number; hour: number; minute: number }
   | { kind: 'defer'; reference: string } | { kind: 'clearSchedule'; reference: string }
   | { kind: 'progress'; activity: 'job_application'; detail: string }
@@ -47,7 +47,7 @@ export function parseCommand(text: string): Command {
   if (intent?.kind === 'reopen_goal') return {kind:'goal',action:'reopen'};
   if (intent?.kind === 'attach_recent_task') return {kind:'goal',action:'attach',taskId:'đó'};
   if (intent?.kind === 'detach_recent_task') return {kind:'goal',action:'detach',taskId:'đó'};
-  if (intent?.kind === 'carry_recent_task') return {kind:'review',carry:'đó'};
+  if (intent?.kind === 'carry_recent_task') return {kind:'review',action:'carry',taskId:'đó'};
   if (intent?.kind === 'complete_recent_task') return {kind:'done',reference:'đó'};
   const add = value.match(/^(?:\/add(?:@\w+)?\s+|(?:thêm việc|thêm công việc|tạo việc)\s*:?\s+)([\s\S]+)$/iu);
   if (add) {
@@ -91,10 +91,13 @@ export function parseCommand(text: string): Command {
     const day=Number(schedule[2]),month=Number(schedule[3]),year=schedule[4]?Number(schedule[4]):undefined,hour=Number(schedule[5]),minute=Number(schedule[6] ?? 0);
     if(day>=1&&day<=31&&month>=1&&month<=12&&hour>=0&&hour<=23&&minute>=0&&minute<=59) return {kind:'schedule',reference:schedule[1]!.toUpperCase(),day,month,year,hour,minute};
   }
-  const carry = value.match(/^\/review(?:@\w+)?\s+carry\s+(T\d+)$/iu);
-  if (carry) return { kind: 'review', carry: carry[1]!.toUpperCase() };
-  const reviewCarry = value.match(/^_navi:review:carry:(T\d+)$/iu);
-  if (reviewCarry) return { kind:'review', carry:reviewCarry[1]!.toUpperCase() };
+  const reviewReason = value.match(/^\/review(?:@\w+)?\s+reason\s+(T\d+)\s+([\s\S]{2,240})$/iu);
+  if (reviewReason) return { kind:'review', action:'reason', taskId:reviewReason[1]!.toUpperCase(), reason:reviewReason[2]!.trim().replace(/\s+/g,' ') };
+  const reviewAction = value.match(/^\/review(?:@\w+)?\s+(carry|keep|confirm|cancel)\s+(T\d+)$/iu);
+  if (reviewAction) return { kind:'review', action:reviewAction[1]!.toLowerCase() as 'carry'|'keep'|'confirm'|'cancel', taskId:reviewAction[2]!.toUpperCase() };
+  const reviewCallback = value.match(/^_navi:review:(carry|keep|confirm|cancel):(T\d+)$/iu);
+  if (reviewCallback) return { kind:'review', action:reviewCallback[1]!.toLowerCase() as 'carry'|'keep'|'confirm'|'cancel', taskId:reviewCallback[2]!.toUpperCase() };
+  if (normalize(value) === 'task này để tuần sau') return { kind:'review', action:'carry', taskId:'đó' };
   if (/^(?:\/review(?:@\w+)?|review tuần)$/iu.test(value)) return { kind: 'review' };
   const progressChange = value.match(/^\/progress(?:@\w+)?\s+(delete|xóa|xoá|edit|sửa)\s+(P\d+)(?:\s+(.+))?$/iu);
   if (progressChange) {

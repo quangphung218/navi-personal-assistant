@@ -532,3 +532,14 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: test regression tạo task 60 phút với ngân sách 30 phút, xác nhận review báo vượt nhưng task vẫn mở; `npm test` pass 67 tests. Processor `8e0dd7a9-b77e-4893-a6e9-19d218172439` đã deploy.
 - Giới hạn: review chưa ghi lý do dời task thành dữ liệu có cấu trúc.
 - Bước tiếp theo: thêm lý do giữ/dời task vào review trước khi làm review tháng.
+
+## 2026-09-16 — Lưu quyết định giữ hoặc dời task khi review
+
+- Bối cảnh: nút dời task trước đây tạo carryover ngay, nên review tuần sau không cho biết lý do thay đổi kế hoạch hoặc khi nào anh chủ động giữ task.
+- Đã làm:
+  - `migrations/0028_weekly_review_decisions.sql` thêm nhật ký quyết định theo tuần, gồm task, lựa chọn `keep`/`carry`, lý do, trạng thái và thời điểm chốt.
+  - `/review` có nút giữ task hoặc sang tuần. Sau khi chọn, Navi yêu cầu `/review reason T... <lý do>` và chỉ tạo carryover sau khi anh xác nhận. Hủy giữ task nguyên trạng.
+  - Review hiện hiển thị các quyết định đã chốt trong tuần, gồm lý do; các quyết định cũ chờ xác nhận được hủy khi anh chọn lại.
+- Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 67 tests, typecheck và hai Worker build dry-run. Migration đã áp dụng trên D1 pilot, có ledger `0028_weekly_review_decisions.sql`; Processor version `35b04ebf-1a7a-4773-9a7e-7781c48d2d3e` đã deploy.
+- Giới hạn: lý do được nhập theo lệnh ngắn, chưa có lựa chọn mẫu như “thiếu thời gian” hoặc tổng hợp xu hướng lý do qua nhiều tuần.
+- Bước tiếp theo: khi đã có vài tuần dữ liệu quyết định, tổng hợp các lý do lặp lại vào review tháng thay vì suy đoán nguyên nhân quá tải.

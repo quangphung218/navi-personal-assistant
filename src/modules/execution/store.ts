@@ -426,6 +426,9 @@ function reviewTaskButtons(open: Task[]): ReplyMarkup | undefined {
   for (const task of open.slice(0,5)) {
     buttons.push([
       {text:`Đã xong ${task.id}`,callback_data:`_navi:task:done:${task.id}`},
+      {text:`Giữ ${task.id}`,callback_data:`_navi:review:keep:${task.id}`},
+    ]);
+    buttons.push([
       {text:`Sang tuần ${task.id}`,callback_data:`_navi:review:carry:${task.id}`},
     ]);
   }
@@ -433,14 +436,17 @@ function reviewTaskButtons(open: Task[]): ReplyMarkup | undefined {
 }
 
 async function weeklyReviewSummary(db: D1Database, plan: WeeklyPlan, now: number): Promise<{text:string; replyMarkup?:ReplyMarkup}> {
-  const [open,items,load] = await Promise.all([tasks(db),ensurePlanItems(db,plan,now),capacitySummary(db,plan.chat_id,plan.week_start)]);
+  const [open,items,load,decisions] = await Promise.all([tasks(db),ensurePlanItems(db,plan,now),capacitySummary(db,plan.chat_id,plan.week_start),
+    db.prepare(`SELECT d.task_id,d.decision,d.reason,t.title FROM weekly_review_decisions d JOIN tasks t ON t.id=d.task_id
+      WHERE d.chat_id=? AND d.week_start=? AND d.status='confirmed' ORDER BY d.decided_at DESC LIMIT 5`).bind(plan.chat_id,plan.week_start).all<{task_id:string;decision:'keep'|'carry';reason:string;title:string}>(),
+  ]);
   const counts = progressCounts(items);
   const taskLines = open.length
     ? open.slice(0,5).map(task=>`• ${task.id}: ${task.title}${task.goal_title ? ` — hỗ trợ: ${task.goal_title}` : ' — việc riêng'}`).join('\n')
     : 'Không còn task mở.';
   const remainder = open.length > 5 ? `\nCòn ${open.length-5} task khác; dùng /list để xem toàn bộ.` : '';
   return {
-    text: `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\nReview tuần\nTải: task ${load.tasks} phút · habit ${load.habits} phút · cam kết ${load.commitment} phút${load.budget === null ? '\nChưa đặt ngân sách giờ.' : ` · tổng ${load.tasks+load.habits+load.commitment}/${load.budget} phút${load.tasks+load.habits+load.commitment>load.budget ? ' — vượt ngân sách, hãy chọn một task sang tuần.' : ''}`}\n\nTask còn mở:\n${taskLines}${remainder}\n\nAnh có thể đánh dấu xong hoặc chọn task cần giữ sang tuần.`,
+    text: `${formatProgress(plan, counts.applications, counts.runs)}${formatPlanItems(items,true)}\n\nReview tuần\nTải: task ${load.tasks} phút · habit ${load.habits} phút · cam kết ${load.commitment} phút${load.budget === null ? '\nChưa đặt ngân sách giờ.' : ` · tổng ${load.tasks+load.habits+load.commitment}/${load.budget} phút${load.tasks+load.habits+load.commitment>load.budget ? ' — vượt ngân sách, hãy chọn một task sang tuần.' : ''}`}\n\nTask còn mở:\n${taskLines}${remainder}${decisions.results.length ? `\n\nQuyết định đã chốt:\n${decisions.results.map(d=>`• ${d.task_id} ${d.decision === 'carry' ? 'sang tuần' : 'giữ tuần này'} — ${d.reason}`).join('\n')}` : ''}\n\nAnh chọn xong, giữ hoặc sang tuần. Navi sẽ hỏi lý do trước khi chốt.`,
     replyMarkup: reviewTaskButtons(open),
   };
 }
@@ -726,19 +732,49 @@ export async function processNext(db: D1Database, now = Date.now(), assistant?: 
       }
     } else if (command.kind === 'review') {
       const currentWeek = weekStart(now);
-      if (command.carry) {
-        const taskCandidates = command.carry === 'đó'
+      if (command.action === 'carry' || command.action === 'keep') {
+        const taskCandidates = command.taskId === 'đó'
           ? (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE status='open' ORDER BY created_at DESC,id DESC LIMIT 2").all<Task>()).results
-          : (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE id=? AND status='open'").bind(command.carry).all<Task>()).results;
+          : (await db.prepare("SELECT id,title,status,revision,due_at FROM tasks WHERE id=? AND status='open'").bind(command.taskId).all<Task>()).results;
         const task = taskCandidates.length === 1 ? taskCandidates[0] : undefined;
-        if (!task) result = taskCandidates.length > 1 ? 'Có nhiều task gần đây. Anh dùng /review carry T... để chọn đúng task nhé.' : 'Task này không còn mở nên không cần chuyển tuần.';
+        if (!task) result = taskCandidates.length > 1 ? 'Có nhiều task gần đây. Anh dùng /review carry T... hoặc /review keep T... để chọn đúng task nhé.' : 'Task này không còn mở nên không cần review.';
         else {
-          const next = weekEnd(currentWeek);
-          const nextMonday = new Date(`${next}T00:00:00Z`); nextMonday.setUTCDate(nextMonday.getUTCDate()+1);
-          const nextWeek = nextMonday.toISOString().slice(0,10);
-          statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_task_carryovers(week_start,task_id,decided_at) SELECT ?,?,? WHERE ${guard}`).bind(nextWeek, task.id, now, ...args()));
-          result = `Đã đánh dấu ${task.id} cho tuần bắt đầu ${nextWeek}. Task vẫn giữ nguyên, không bị nhân đôi.`;
+          statements.push(db.prepare(`UPDATE weekly_review_decisions SET status='cancelled',decided_at=? WHERE chat_id=? AND week_start=? AND task_id=? AND status='pending' AND ${guard}`).bind(now,job.chat_id,currentWeek,task.id,...args()));
+          statements.push(db.prepare(`INSERT INTO weekly_review_decisions(chat_id,week_start,task_id,decision,created_at)
+            SELECT ?,?,?,?,? WHERE ${guard}`).bind(job.chat_id,currentWeek,task.id,command.action,now,...args()));
+          result = `Anh chọn ${command.action === 'carry' ? 'đưa' : 'giữ'} ${task.id}: ${task.title}${command.action === 'carry' ? ' sang tuần sau' : ' trong tuần này'}.\n\nLý do là gì? Anh nhắn:\n/review reason ${task.id} <lý do>\n\nNavi chỉ chốt sau khi anh xác nhận.`;
         }
+      } else if (command.action === 'reason' && command.taskId && command.reason) {
+        const pending = await db.prepare(`SELECT id,decision FROM weekly_review_decisions WHERE chat_id=? AND week_start=? AND task_id=? AND status='pending' ORDER BY id DESC LIMIT 1`)
+          .bind(job.chat_id,currentWeek,command.taskId).first<{id:number;decision:'carry'|'keep'}>();
+        if (!pending) result = `Chưa có quyết định chờ xác nhận cho ${command.taskId}. Anh dùng /review để chọn giữ hoặc sang tuần trước nhé.`;
+        else {
+          statements.push(db.prepare(`UPDATE weekly_review_decisions SET reason=? WHERE id=? AND status='pending' AND ${guard}`).bind(command.reason,pending.id,...args()));
+          result = `Lý do cho ${command.taskId}: ${command.reason}\n\nAnh xác nhận ${pending.decision === 'carry' ? 'đưa task sang tuần' : 'giữ task trong tuần'} chứ?`;
+          replyMarkup = {inline_keyboard:[[
+            {text:'Xác nhận',callback_data:`_navi:review:confirm:${command.taskId}`},
+            {text:'Hủy',callback_data:`_navi:review:cancel:${command.taskId}`},
+          ]]};
+        }
+      } else if (command.action === 'confirm' && command.taskId) {
+        const pending = await db.prepare(`SELECT d.id,d.decision,d.reason,t.title FROM weekly_review_decisions d JOIN tasks t ON t.id=d.task_id
+          WHERE d.chat_id=? AND d.week_start=? AND d.task_id=? AND d.status='pending' AND t.status='open' ORDER BY d.id DESC LIMIT 1`)
+          .bind(job.chat_id,currentWeek,command.taskId).first<{id:number;decision:'carry'|'keep';reason:string|null;title:string}>();
+        if (!pending) result = `Quyết định cho ${command.taskId} không còn chờ xác nhận. Anh dùng /review để xem lại.`;
+        else if (!pending.reason) result = `Anh cần ghi lý do trước khi chốt ${command.taskId}. Ví dụ: /review reason ${command.taskId} Chưa đủ thời gian trong tuần này`;
+        else {
+          statements.push(db.prepare(`UPDATE weekly_review_decisions SET status='confirmed',decided_at=? WHERE id=? AND status='pending' AND ${guard}`).bind(now,pending.id,...args()));
+          if (pending.decision === 'carry') {
+            const next = weekEnd(currentWeek);
+            const nextMonday = new Date(`${next}T00:00:00Z`); nextMonday.setUTCDate(nextMonday.getUTCDate()+1);
+            const nextWeek = nextMonday.toISOString().slice(0,10);
+            statements.push(db.prepare(`INSERT OR IGNORE INTO weekly_task_carryovers(week_start,task_id,decided_at) SELECT ?,?,? WHERE ${guard}`).bind(nextWeek,command.taskId,now,...args()));
+            result = `Đã chốt đưa ${command.taskId}: ${pending.title} sang tuần bắt đầu ${nextWeek}.\nLý do: ${pending.reason}`;
+          } else result = `Đã chốt giữ ${command.taskId}: ${pending.title} trong tuần này.\nLý do: ${pending.reason}`;
+        }
+      } else if (command.action === 'cancel' && command.taskId) {
+        statements.push(db.prepare(`UPDATE weekly_review_decisions SET status='cancelled',decided_at=? WHERE chat_id=? AND week_start=? AND task_id=? AND status='pending' AND ${guard}`).bind(now,job.chat_id,currentWeek,command.taskId,...args()));
+        result = `Đã hủy quyết định cho ${command.taskId}. Task chưa bị thay đổi.`;
       } else {
         const plan = await db.prepare("SELECT week_start,chat_id,goal,commitment,habit1,habit2 FROM weekly_plans WHERE week_start=? AND chat_id=? AND status='active'").bind(currentWeek, job.chat_id).first<WeeklyPlan>();
         if (!plan) result = 'Tuần này chưa có kế hoạch để review. Anh nhắn /week để lập kế hoạch nhé.';

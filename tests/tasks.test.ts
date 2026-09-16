@@ -26,6 +26,7 @@ import focusFeedbackMigration from '../migrations/0024_focus_feedback.sql?raw';
 import replyContextMigration from '../migrations/0025_reply_context.sql?raw';
 import profileMigration from '../migrations/0026_operating_profile.sql?raw';
 import capacityMigration from '../migrations/0027_weekly_capacity.sql?raw';
+import reviewDecisionsMigration from '../migrations/0028_weekly_review_decisions.sql?raw';
 import ingress from '../src/entrypoints/ingress';
 import { accept, processNext, deliverNext, enqueueDailyBriefing, enqueueDueTaskReminders, enqueueWeeklyProgressReminder, enqueueWeeklyReview, tasks, ownerFor, hasPending } from '../src/modules/execution/store';
 import { parseCommand } from '../src/modules/work/commands';
@@ -58,8 +59,8 @@ async function replies() {
 }
 beforeEach(async()=>{
   vi.stubGlobal('fetch',vi.fn().mockResolvedValue(new Response(JSON.stringify({ok:true,result:{message_id:1}}),{status:200})));
-  for(const table of ['weekly_capacities','profile_change_requests','operating_profiles','focus_feedback','goal_rename_requests','checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
-  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';'), ...goalRenameMigration.split(';'), ...focusFeedbackMigration.split(';'), ...replyContextMigration.split(';'), ...profileMigration.split(';'), ...capacityMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
+  for(const table of ['weekly_review_decisions','weekly_capacities','profile_change_requests','operating_profiles','focus_feedback','goal_rename_requests','checkin_measurement_requests','checkin_outcomes','checkin_selection_requests','checkin_change_requests','weekly_checkins','weekly_plan_items','habit_definitions','weekly_task_carryovers','weekly_reviews','daily_briefings','task_reminders','progress_change_requests','job_metrics','weekly_reminders','reminder_preferences','weekly_progress_events','conversation_messages','weekly_plans','weekly_drafts','approval_requests','ai_budget','deliveries','tasks','goals','jobs','owner']) await db.prepare(`DROP TABLE IF EXISTS ${table}`).run();
+  await db.batch([...migration.split(';'), ...aiBudgetMigration.split(';'), ...approvalsMigration.split(';'), ...weeklyMigration.split(';'), ...contextMigration.split(';'), ...progressMigration.split(';'), ...remindersMigration.split(';'), ...correctionsMigration.split(';'), ...inlineActionsMigration.split(';'), ...dailyLoopMigration.split(';'), ...genericCheckinsMigration.split(';'), ...checkinCorrectionsMigration.split(';'), ...checkinSelectionMigration.split(';'), ...checkinOutcomesMigration.split(';'), ...expireCheckinSelectionsMigration.split(';'), ...foundationsMigration.split(';'), ...backfillHabitDatesMigration.split(';'), ...measurementRequestsMigration.split(';'), ...latencyMetricsMigration.split(';'), ...aiTaskProposalsMigration.split(';'), ...goalRenameMigration.split(';'), ...focusFeedbackMigration.split(';'), ...replyContextMigration.split(';'), ...profileMigration.split(';'), ...capacityMigration.split(';'), ...reviewDecisionsMigration.split(';')].map(s=>s.trim()).filter(Boolean).map(s=>db.prepare(s)));
 });
 describe('task conversation on real D1 bindings',()=>{
   it('exposes a compact Telegram command menu backed by supported commands',()=>{
@@ -80,9 +81,9 @@ describe('task conversation on real D1 bindings',()=>{
     expect(parseCommand('/goal rename Tìm việc Product')).toEqual({kind:'goal',action:'rename',title:'Tìm việc Product'});
     expect(parseCommand('/goal history')).toEqual({kind:'goal',action:'history'});
     expect(parseCommand('/week continue')).toEqual({kind:'week',continueGoal:true});
-    expect(parseCommand('_navi:review:carry:T12')).toEqual({kind:'review',carry:'T12'});
+    expect(parseCommand('_navi:review:carry:T12')).toEqual({kind:'review',action:'carry',taskId:'T12'});
     expect(parseCommand('Mục tiêu này xong rồi')).toEqual({kind:'goal',action:'complete'});
-    expect(parseCommand('Task này để tuần sau')).toEqual({kind:'review',carry:'đó'});
+    expect(parseCommand('Task này để tuần sau')).toEqual({kind:'review',action:'carry',taskId:'đó'});
     expect(parseCommand('Gắn task này vào mục tiêu')).toEqual({kind:'goal',action:'attach',taskId:'đó'});
     expect(parseCommand('Hello em, mục tiêu apply 5 cv trong tuần này anh cần có task mới là xây dựng lại make cv cho từng vị trí'))
       .toEqual({kind:'add',title:'xây dựng lại make cv cho từng vị trí',goalScoped:true});
@@ -691,7 +692,7 @@ describe('task conversation on real D1 bindings',()=>{
     await accept(db,update(19,`_navi:confirm:goal:archive:${goal!.id}`),false); await processNext(db); await replies();
     expect(await db.prepare('SELECT status FROM goals WHERE id=?').bind(goal!.id).first()).toMatchObject({status:'archived'});
   });
-  it('makes an actionable weekly review and carries a chosen task forward',async()=>{
+  it('records a reason before carrying a review task forward',async()=>{
     const now=Date.now();
     await accept(db,update(1,'/start secret'),true,now); await processNext(db,now); await replies();
     for(const [id,text] of [[2,'/week'],[3,'Ship Navi'],[4,'Apply 5 jobs'],[5,'Chạy bộ 3 buổi'],[6,'Đọc sách'],[7,'đúng'],[8,'/add Viết README']] as const) {
@@ -701,10 +702,18 @@ describe('task conversation on real D1 bindings',()=>{
     const delivery=await db.prepare('SELECT text,reply_markup FROM deliveries ORDER BY job_id DESC LIMIT 1').first<{text:string;reply_markup:string}>();
     expect(delivery?.text).toContain('Review tuần');
     expect(delivery?.text).toContain('T8: Viết README — việc riêng');
-    expect(JSON.parse(delivery!.reply_markup)).toEqual({inline_keyboard:[[{text:'Đã xong T8',callback_data:'_navi:task:done:T8'},{text:'Sang tuần T8',callback_data:'_navi:review:carry:T8'}]]});
+    expect(JSON.parse(delivery!.reply_markup)).toEqual({inline_keyboard:[
+      [{text:'Đã xong T8',callback_data:'_navi:task:done:T8'},{text:'Giữ T8',callback_data:'_navi:review:keep:T8'}],
+      [{text:'Sang tuần T8',callback_data:'_navi:review:carry:T8'}],
+    ]});
     await replies();
     await accept(db,update(10,'_navi:review:carry:T8'),false,now); await processNext(db,now); await replies();
+    expect(await db.prepare("SELECT status,reason FROM weekly_review_decisions WHERE task_id='T8'").first()).toMatchObject({status:'pending',reason:null});
+    expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toBeNull();
+    await accept(db,update(11,'/review reason T8 Chưa đủ thời gian trong tuần này'),false,now); await processNext(db,now); await replies();
+    await accept(db,update(12,'_navi:review:confirm:T8'),false,now); await processNext(db,now); await replies();
     expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toMatchObject({task_id:'T8'});
+    expect(await db.prepare("SELECT status,reason FROM weekly_review_decisions WHERE task_id='T8' ORDER BY id DESC").first()).toMatchObject({status:'confirmed',reason:'Chưa đủ thời gian trong tuần này'});
   });
   it('shows weekly capacity in review and keeps deferral behind an explicit button',async()=>{
     const now=Date.now();
@@ -731,8 +740,10 @@ describe('task conversation on real D1 bindings',()=>{
     expect(JSON.parse(goalPrompt!.reply_markup).inline_keyboard[0][0].callback_data).toContain('_navi:confirm:goal:complete:');
     await replies();
     await accept(db,update(11,'Task này để tuần sau'),false,now); await processNext(db,now); await replies();
+    await accept(db,update(12,'/review reason T8 Ưu tiên chưa đủ rõ'),false,now); await processNext(db,now); await replies();
+    await accept(db,update(13,'/review confirm T8'),false,now); await processNext(db,now); await replies();
     expect(await db.prepare("SELECT task_id FROM weekly_task_carryovers WHERE task_id='T8'").first()).toMatchObject({task_id:'T8'});
-    await accept(db,update(12,'/help'),false,now); await processNext(db,now);
+    await accept(db,update(14,'/help'),false,now); await processNext(db,now);
     expect((await replies()).at(-1)).toContain('mục tiêu này xong rồi');
   });
   it('adds a task scoped to the stated goal without waiting for the AI fallback',async()=>{

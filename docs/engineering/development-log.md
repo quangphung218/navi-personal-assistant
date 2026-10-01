@@ -543,3 +543,14 @@ Nhật ký này là nguồn ghi vết chính cho quá trình phát triển Navi.
 - Đã kiểm chứng: `npm exec --yes --package=node@24 -- npm run check` pass 67 tests, typecheck và hai Worker build dry-run. Migration đã áp dụng trên D1 pilot, có ledger `0028_weekly_review_decisions.sql`; Processor version `35b04ebf-1a7a-4773-9a7e-7781c48d2d3e` đã deploy.
 - Giới hạn: lý do được nhập theo lệnh ngắn, chưa có lựa chọn mẫu như “thiếu thời gian” hoặc tổng hợp xu hướng lý do qua nhiều tuần.
 - Bước tiếp theo: khi đã có vài tuần dữ liệu quyết định, tổng hợp các lý do lặp lại vào review tháng thay vì suy đoán nguyên nhân quá tải.
+
+## 2026-10-01 — Dừng Navi, chuẩn bị bot mới dựa trên Claude
+
+- Bối cảnh: chủ dự án đánh giá Navi chưa tạo giá trị thực; quyết định dừng bot và xây bot mới tận dụng phiên Claude để hiểu ngữ cảnh và ra quyết định.
+- Đã làm:
+  - Export đầy đủ D1 `personal-assistant-pilot` vào `backups/` (gitignore, quyền 600) và lưu hồ sơ bàn giao local gồm tài nguyên, bot Telegram, owner và secrets.
+  - Gỡ webhook Telegram; xóa Worker `personal-assistant-ingress`, `personal-assistant-processor` và Queue `personal-assistant-jobs`.
+  - Giữ D1 trên cloud, bot Telegram cùng token và OpenRouter key để bot mới dùng lại.
+- Đã kiểm chứng: backup khôi phục được vào SQLite (90 jobs, 3 tasks, 1 owner); `getWebhookInfo` trả url rỗng; URL ingress trả 404; `wrangler queues list` không còn queue; D1 vẫn còn.
+- Giới hạn: Cloudflare Secrets đã mất cùng Worker, bản duy nhất nằm trong file local được gitignore. Code trong repo không còn môi trường chạy.
+- Bước tiếp theo: thiết kế bot mới; quyết định giữ hay xóa D1 sau khi bot mới đã chuyển dữ liệu cần thiết.
